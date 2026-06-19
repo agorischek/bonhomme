@@ -237,7 +237,8 @@ pub async fn run() -> Result<()> {
         Command::Server(args) => api::serve(Some(cli.database_url), args.addr).await,
         command => {
             let storage =
-                Storage::connect(&cli.database_url, Arc::new(bonhomme_ts::TypeScriptPlugin)).await?;
+                Storage::connect(&cli.database_url, Arc::new(bonhomme_ts::TypeScriptPlugin))
+                    .await?;
             storage.migrate().await?;
             run_storage_command(storage, command).await
         }

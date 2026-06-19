@@ -4,7 +4,6 @@ use crate::demo::{
 };
 use crate::simulation::{SimulationRequest, SimulationResult, run_simulation};
 use anyhow::Result;
-use bonhomme_engine::{DEFAULT_DATABASE_URL, MergeResult, Storage};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -12,6 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use bonhomme_engine::{DEFAULT_DATABASE_URL, MergeResult, Storage};
 use serde::Serialize;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
