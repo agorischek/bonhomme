@@ -446,7 +446,11 @@ pub fn import_typescript_files(files: &[RenderedFile]) -> Result<Vec<Operation>>
                 parent_id: Some(file_id),
                 body: Some(body),
             });
-            indexes.name_index.entry(name).or_default().push(function_id);
+            indexes
+                .name_index
+                .entry(name)
+                .or_default()
+                .push(function_id);
         }
 
         top_level.sort_by_key(|entry| entry.start);
@@ -531,9 +535,16 @@ fn import_class_children(
             parent_id: Some(class_id),
             body: Some(body),
         });
-        indexes.name_index.entry(name.clone()).or_default().push(method_id);
+        indexes
+            .name_index
+            .entry(name.clone())
+            .or_default()
+            .push(method_id);
         // First declaration wins so a later same-named member cannot silently shadow it.
-        indexes.sibling_index.entry((class_id, name)).or_insert(method_id);
+        indexes
+            .sibling_index
+            .entry((class_id, name))
+            .or_insert(method_id);
     }
 
     for captures in property_re.captures_iter(class_body) {
@@ -578,7 +589,10 @@ fn import_class_children(
             .entry(name.clone())
             .or_default()
             .push(property_id);
-        indexes.sibling_index.entry((class_id, name)).or_insert(property_id);
+        indexes
+            .sibling_index
+            .entry((class_id, name))
+            .or_insert(property_id);
     }
 
     child_entries.sort_by_key(|entry| entry.0);
@@ -709,7 +723,12 @@ pub fn diff_slice(original: &[RenderedFile], modified: &[RenderedFile]) -> Resul
         let mut consumed = BTreeSet::new();
         let mut edits = Vec::new();
         edits.extend(diff_functions(original_file, modified_file, &mut consumed)?);
-        edits.extend(diff_classes(path, original_file, modified_file, &mut consumed)?);
+        edits.extend(diff_classes(
+            path,
+            original_file,
+            modified_file,
+            &mut consumed,
+        )?);
 
         // Deletes are emitted before edits to preserve the historical operation ordering.
         operations.extend(diff_deletes(original_file, modified_file, &consumed)?);
@@ -844,7 +863,8 @@ fn diff_classes(
                     {
                         operations.push(Operation::UpdateSymbol {
                             symbol_id,
-                            name: (original_method.name != method.name).then(|| method.name.clone()),
+                            name: (original_method.name != method.name)
+                                .then(|| method.name.clone()),
                             body: Some(method.body.clone()),
                             metadata: Some(json!({"signature": method.signature})),
                         });

@@ -493,7 +493,7 @@ function AgentCard({
         <strong>{branch.name}</strong>
         <span>{status}</span>
       </div>
-      <pre>{`slice OrderService\n+ ${methodName}(): string\n+ reference displayName()`}</pre>
+      <pre>{`slice OrderService\n+ ${methodName}(): string\n+ refs displayName(), listOrders()`}</pre>
       <button type="button" disabled={disabled || branch.status !== 'ready' || conflicted} onClick={onMerge} title="Merge this branch">
         <GitMerge aria-hidden="true" />
         Merge

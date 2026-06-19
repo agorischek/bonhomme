@@ -135,8 +135,8 @@ This changes the merge problem.
 If two agents both edit the same class:
 
 ```text
-agent-a: CreateSymbol(method, "calculateTax")
-agent-b: CreateSymbol(method, "displayStatus")
+agent-a: CreateSymbol(method, "carrierRoutingPlan")
+agent-b: CreateSymbol(method, "refundReadiness")
 ```
 
 Those are independent operations. They can merge safely even though both would normally touch the same TypeScript file.
@@ -211,11 +211,12 @@ In bonhomme, a ChangeSet is the unit of review.
 A ChangeSet groups operations produced by a task or agent. Instead of reviewing only a line-based diff, a reviewer can inspect the semantic changes:
 
 ```text
-ChangeSet: agent-017 method addition
+ChangeSet: agent-017 delivery promise
 
 Operations:
-  - CreateSymbol(method, "agent017Status")
-  - CreateReference(calls, from agent017Status to displayName)
+  - CreateSymbol(method, "deliveryPromise")
+  - CreateReference(calls, from deliveryPromise to displayName)
+  - CreateReference(calls, from deliveryPromise to listOrders)
 ```
 
 This is meant to make review more legible when there are many concurrent agents. A reviewer can ask:
@@ -331,4 +332,3 @@ semantic operations <-> graph <-> TypeScript files
 then merging, review, provenance, and reconstruction can all become more precise.
 
 bonhomme is the first cut at that idea.
-

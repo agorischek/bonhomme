@@ -285,7 +285,12 @@ impl SemanticGraph {
                         anyhow::anyhow!("cannot update missing symbol {symbol_id}")
                     })?;
                 if let Some(name) = name
-                    && self.has_symbol_named(current.parent_id, &current.kind, name, Some(*symbol_id))
+                    && self.has_symbol_named(
+                        current.parent_id,
+                        &current.kind,
+                        name,
+                        Some(*symbol_id),
+                    )
                 {
                     bail!("duplicate {} symbol named {}", current.kind, name);
                 }

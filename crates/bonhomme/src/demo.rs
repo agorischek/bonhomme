@@ -30,6 +30,16 @@ pub fn display_name_method_id() -> Uuid {
     stable_uuid("symbol/OrderService/displayName")
 }
 
+pub fn list_orders_method_id() -> Uuid {
+    stable_uuid("symbol/OrderService/listOrders")
+}
+
+struct DemoMethod {
+    name: String,
+    label: String,
+    body: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpawnAgentsRequest {
@@ -280,7 +290,9 @@ async fn seed_initial_order_service(
     let file_id = order_service_file_id();
     let class_id = order_service_class_id();
     let display_name_id = display_name_method_id();
-    let list_orders_id = stable_uuid("symbol/OrderService/listOrders");
+    let service_name_id = stable_uuid("symbol/OrderService/serviceName");
+    let default_region_id = stable_uuid("symbol/OrderService/defaultRegion");
+    let list_orders_id = list_orders_method_id();
 
     let operations = vec![
         Operation::CreateSymbol {
@@ -300,11 +312,27 @@ async fn seed_initial_order_service(
             metadata: json!({"exported": true}),
         },
         Operation::CreateSymbol {
+            symbol_id: service_name_id,
+            parent_id: Some(class_id),
+            kind: "property".to_string(),
+            name: "serviceName".to_string(),
+            body: None,
+            metadata: json!({"declaration": "private readonly serviceName = \"OrderService\";"}),
+        },
+        Operation::CreateSymbol {
+            symbol_id: default_region_id,
+            parent_id: Some(class_id),
+            kind: "property".to_string(),
+            name: "defaultRegion".to_string(),
+            body: None,
+            metadata: json!({"declaration": "private readonly defaultRegion = \"north-america\";"}),
+        },
+        Operation::CreateSymbol {
             symbol_id: display_name_id,
             parent_id: Some(class_id),
             kind: "method".to_string(),
             name: "displayName".to_string(),
-            body: Some("return \"OrderService\";".to_string()),
+            body: Some("return this.serviceName;".to_string()),
             metadata: json!({"signature": "displayName(): string"}),
         },
         Operation::CreateSymbol {
@@ -312,7 +340,10 @@ async fn seed_initial_order_service(
             parent_id: Some(class_id),
             kind: "method".to_string(),
             name: "listOrders".to_string(),
-            body: Some("return [\"pending\", \"packed\", \"shipped\"];".to_string()),
+            body: Some(
+                "return [\"intake\", \"payment\", \"picking\", \"packing\", \"shipped\"];"
+                    .to_string(),
+            ),
             metadata: json!({"signature": "listOrders(): string[]"}),
         },
     ];
@@ -333,13 +364,15 @@ async fn spawn_one_agent(
     include_conflicts: bool,
 ) -> Result<()> {
     let agent_name = format!("agent-{number:03}");
+    let conflict_slot = include_conflicts && number.is_multiple_of(11);
+    let demo_method = demo_method(number, conflict_slot, &agent_name);
     let branch = storage
         .create_branch(repository.id, &agent_name, "main")
         .await?;
     let task = storage
         .create_task(
             repository.id,
-            &format!("{agent_name}: add an OrderService semantic method"),
+            &format!("{agent_name}: add {} to OrderService", demo_method.label),
         )
         .await?;
     let changeset = storage
@@ -347,7 +380,7 @@ async fn spawn_one_agent(
             repository.id,
             task.id,
             branch.id,
-            &format!("{agent_name} method addition"),
+            &format!("{agent_name} {}", demo_method.label),
             &agent_name,
         )
         .await?;
@@ -359,26 +392,19 @@ async fn spawn_one_agent(
             "PromptAttachment",
             json!({
                 "model": format!("agent-sim-{number:03}"),
-                "prompt": "Add one independent OrderService method through a semantic slice."
+                "prompt": format!("Add the {} capability to OrderService through a semantic slice.", demo_method.label)
             }),
         )
         .await?;
 
-    let conflict_slot = include_conflicts && number.is_multiple_of(11);
-    let method_name = if conflict_slot {
-        "sharedAudit".to_string()
-    } else {
-        format!("agent{number:03}Status")
-    };
+    let method_name = demo_method.name.clone();
     let method_id = stable_uuid(&format!("symbol/OrderService/{agent_name}/{method_name}"));
-    let reference_id = stable_uuid(&format!(
+    let display_reference_id = stable_uuid(&format!(
         "reference/OrderService/{agent_name}/{method_name}/displayName"
     ));
-    let return_text = if conflict_slot {
-        format!("return `${{this.displayName()}} shared audit from {agent_name}`;")
-    } else {
-        format!("return `${{this.displayName()}} accepted {agent_name}`;")
-    };
+    let list_reference_id = stable_uuid(&format!(
+        "reference/OrderService/{agent_name}/{method_name}/listOrders"
+    ));
 
     storage
         .append_operation(
@@ -390,7 +416,7 @@ async fn spawn_one_agent(
                 parent_id: Some(order_service_class_id()),
                 kind: "method".to_string(),
                 name: method_name.clone(),
-                body: Some(return_text),
+                body: Some(demo_method.body),
                 metadata: json!({"signature": format!("{method_name}(): string")}),
             },
         )
@@ -401,15 +427,92 @@ async fn spawn_one_agent(
             branch.id,
             changeset.id,
             Operation::CreateReference {
-                reference_id,
+                reference_id: display_reference_id,
                 from_symbol_id: method_id,
                 to_symbol_id: display_name_method_id(),
                 kind: "calls".to_string(),
             },
         )
         .await?;
+    storage
+        .append_operation(
+            repository.id,
+            branch.id,
+            changeset.id,
+            Operation::CreateReference {
+                reference_id: list_reference_id,
+                from_symbol_id: method_id,
+                to_symbol_id: list_orders_method_id(),
+                kind: "calls".to_string(),
+            },
+        )
+        .await?;
 
     Ok(())
+}
+
+fn demo_method(number: usize, conflict_slot: bool, agent_name: &str) -> DemoMethod {
+    if conflict_slot {
+        return DemoMethod {
+            name: "duplicateRiskReview".to_string(),
+            label: "duplicate risk review".to_string(),
+            body: format!(
+                "const stages = this.listOrders().join(\" / \");\nreturn `${{this.displayName()}} risk review from {agent_name}: ${{stages}}`;"
+            ),
+        };
+    }
+
+    let scenarios = [
+        (
+            "fulfillmentReadiness",
+            "fulfillment readiness",
+            "north dock",
+        ),
+        ("paymentRiskSignal", "payment risk signal", "payments"),
+        ("inventoryReservation", "inventory reservation", "warehouse"),
+        ("carrierRoutingPlan", "carrier routing plan", "last-mile"),
+        ("returnWindowNotice", "return window notice", "returns"),
+        (
+            "loyaltyUpgradeHint",
+            "loyalty upgrade hint",
+            "customer care",
+        ),
+        ("taxCheckpoint", "tax checkpoint", "billing"),
+        ("fraudEscalationNote", "fraud escalation note", "risk"),
+        ("packingPriority", "packing priority", "packing"),
+        ("backorderRecovery", "backorder recovery", "supply"),
+        ("subscriptionHealth", "subscription health", "subscriptions"),
+        ("invoiceNarrative", "invoice narrative", "finance"),
+        ("warehouseLoadPlan", "warehouse load plan", "dock"),
+        ("vipServicePromise", "VIP service promise", "concierge"),
+        ("allocationHint", "allocation hint", "planner"),
+        ("complianceStamp", "compliance stamp", "compliance"),
+        ("deliveryPromise", "delivery promise", "routing"),
+        ("refundReadiness", "refund readiness", "refunds"),
+        ("batchPickingPlan", "batch picking plan", "picking"),
+        ("serviceRecovery", "service recovery", "support"),
+        ("giftWrapSignal", "gift wrap signal", "extras"),
+        ("regionalCapacity", "regional capacity", "capacity"),
+        ("priorityQueueNote", "priority queue note", "queueing"),
+        ("handoffSummary", "handoff summary", "operations"),
+    ];
+    let (base_name, label, lane) = scenarios[(number - 1) % scenarios.len()];
+    let cycle = ((number - 1) / scenarios.len()) + 1;
+    let name = if cycle == 1 {
+        base_name.to_string()
+    } else {
+        format!("{base_name}{cycle}")
+    };
+    let promise_hours = 12 + (number % 6) * 6;
+    let signal = ["green", "amber", "blue", "silver", "gold"][number % 5];
+
+    DemoMethod {
+        name,
+        label: label.to_string(),
+        body: format!(
+            "const stages = this.listOrders().join(\" -> \");\nreturn `${{this.displayName()}} {label} on {lane} lane: {signal} within {promise_hours}h (${{stages}})`;"
+        ),
+    }
 }
 
 async fn branch_summary(
