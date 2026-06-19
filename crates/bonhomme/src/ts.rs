@@ -11,8 +11,8 @@ use std::{
 use tokio::{fs, process::Command, time};
 use uuid::Uuid;
 
-pub use crate::lang::{RenderedFile, Slice};
 use crate::lang::{LanguagePlugin, ValidateFuture};
+pub use crate::lang::{RenderedFile, Slice};
 
 /// The TypeScript implementation of [`LanguagePlugin`]. A zero-sized handle that routes the
 /// engine's render/import/diff/validate calls to this module's TypeScript-specific functions, so
