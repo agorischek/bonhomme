@@ -240,10 +240,20 @@ pub struct ParsedClass {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ParsedFunction {
+    pub symbol_id: Option<Uuid>,
+    pub name: String,
+    pub signature: String,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ParsedFile {
     pub path: String,
     pub file_symbol_id: Option<Uuid>,
     pub classes: Vec<ParsedClass>,
+    pub functions: Vec<ParsedFunction>,
 }
 
 #[derive(Clone, Debug)]
@@ -659,12 +669,23 @@ fn outside_ranges(content: &str, ranges: &[(usize, usize)]) -> String {
 pub fn diff_slice(original: &[RenderedFile], modified: &[RenderedFile]) -> Result<Vec<Operation>> {
     let original_by_path = parse_files(original)?;
     let modified_by_path = parse_files(modified)?;
+    let modified_sources = modified
+        .iter()
+        .map(|file| (file.path.clone(), file.clone()))
+        .collect::<BTreeMap<_, _>>();
     let mut operations = Vec::new();
 
-    for (path, modified_file) in modified_by_path {
-        let Some(original_file) = original_by_path.get(&path) else {
-            bail!("new files are not supported by the v1 slice diff prototype: {path}");
+    for (path, modified_file) in &modified_by_path {
+        let Some(original_file) = original_by_path.get(path) else {
+            let source = modified_sources
+                .get(path)
+                .with_context(|| format!("modified source for {path} is missing"))?;
+            operations.extend(import_typescript_files(std::slice::from_ref(source))?);
+            continue;
         };
+
+        operations.extend(diff_file_deletes(original_file, modified_file)?);
+        operations.extend(diff_file_functions(original_file, modified_file)?);
 
         let original_methods = original_file
             .classes
@@ -673,7 +694,7 @@ pub fn diff_slice(original: &[RenderedFile], modified: &[RenderedFile]) -> Resul
             .filter_map(|method| method.symbol_id.map(|id| (id, method)))
             .collect::<BTreeMap<_, _>>();
 
-        for modified_class in modified_file.classes {
+        for modified_class in &modified_file.classes {
             let original_class = original_file
                 .classes
                 .iter()
@@ -690,7 +711,7 @@ pub fn diff_slice(original: &[RenderedFile], modified: &[RenderedFile]) -> Resul
                 )
             })?;
 
-            for method in modified_class.methods {
+            for method in &modified_class.methods {
                 match method.symbol_id {
                     Some(symbol_id) => {
                         if let Some(original_method) = original_methods.get(&symbol_id) {
@@ -703,9 +724,9 @@ pub fn diff_slice(original: &[RenderedFile], modified: &[RenderedFile]) -> Resul
                                     name: if original_method.name == method.name {
                                         None
                                     } else {
-                                        Some(method.name)
+                                        Some(method.name.clone())
                                     },
-                                    body: Some(method.body),
+                                    body: Some(method.body.clone()),
                                     metadata: Some(json!({"signature": method.signature})),
                                 });
                             }
@@ -716,12 +737,120 @@ pub fn diff_slice(original: &[RenderedFile], modified: &[RenderedFile]) -> Resul
                             symbol_id: Uuid::new_v4(),
                             parent_id: Some(parent_id),
                             kind: "method".to_string(),
-                            name: method.name,
-                            body: Some(method.body),
+                            name: method.name.clone(),
+                            body: Some(method.body.clone()),
                             metadata: json!({"signature": method.signature}),
                         });
                     }
                 }
+            }
+        }
+    }
+
+    Ok(operations)
+}
+
+fn diff_file_deletes(
+    original_file: &ParsedFile,
+    modified_file: &ParsedFile,
+) -> Result<Vec<Operation>> {
+    let mut operations = Vec::new();
+    let modified_function_ids = modified_file
+        .functions
+        .iter()
+        .filter_map(|function| function.symbol_id)
+        .collect::<BTreeSet<_>>();
+
+    for original_function in &original_file.functions {
+        if let Some(symbol_id) = original_function.symbol_id {
+            if !modified_function_ids.contains(&symbol_id) {
+                operations.push(Operation::DeleteSymbol { symbol_id });
+            }
+        }
+    }
+
+    for original_class in &original_file.classes {
+        let Some(modified_class) = modified_file.classes.iter().find(|class| {
+            class.symbol_id == original_class.symbol_id || class.name == original_class.name
+        }) else {
+            if original_class.symbol_id.is_some() {
+                bail!(
+                    "class deletes are not supported by the v1 slice diff prototype: {}",
+                    original_class.name
+                );
+            }
+            continue;
+        };
+        let modified_method_ids = modified_class
+            .methods
+            .iter()
+            .filter_map(|method| method.symbol_id)
+            .collect::<BTreeSet<_>>();
+        for original_method in &original_class.methods {
+            if let Some(symbol_id) = original_method.symbol_id {
+                if !modified_method_ids.contains(&symbol_id) {
+                    operations.push(Operation::DeleteSymbol { symbol_id });
+                }
+            }
+        }
+    }
+
+    Ok(operations)
+}
+
+fn diff_file_functions(
+    original_file: &ParsedFile,
+    modified_file: &ParsedFile,
+) -> Result<Vec<Operation>> {
+    let mut operations = Vec::new();
+    let original_functions = original_file
+        .functions
+        .iter()
+        .filter_map(|function| function.symbol_id.map(|id| (id, function)))
+        .collect::<BTreeMap<_, _>>();
+
+    for function in &modified_file.functions {
+        match function.symbol_id {
+            Some(symbol_id) => {
+                if let Some(original_function) = original_functions.get(&symbol_id) {
+                    if original_function.signature != function.signature
+                        || original_function.body.trim() != function.body.trim()
+                        || original_function.name != function.name
+                    {
+                        operations.push(Operation::UpdateSymbol {
+                            symbol_id,
+                            name: if original_function.name == function.name {
+                                None
+                            } else {
+                                Some(function.name.clone())
+                            },
+                            body: Some(function.body.clone()),
+                            metadata: Some(json!({
+                                "declaration": function.signature,
+                                "exported": function.signature.starts_with("export ")
+                            })),
+                        });
+                    }
+                }
+            }
+            None => {
+                let file_symbol_id = original_file.file_symbol_id.with_context(|| {
+                    format!(
+                        "file {} has no bonhomme symbol metadata",
+                        original_file.path
+                    )
+                })?;
+                operations.push(Operation::CreateSymbol {
+                    symbol_id: Uuid::new_v4(),
+                    parent_id: Some(file_symbol_id),
+                    kind: "function".to_string(),
+                    name: function.name.clone(),
+                    body: Some(function.body.clone()),
+                    metadata: json!({
+                        "declaration": function.signature,
+                        "exported": function.signature.starts_with("export ")
+                    }),
+                });
             }
         }
     }
@@ -815,6 +944,9 @@ pub fn parse_file(file: &RenderedFile) -> Result<ParsedFile> {
     let method_re = Regex::new(
         r"^\s*((?:public|private|protected|async|static)\s+)*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*\([^)]*\)\s*(?::\s*[^/{]+)?\s*(?:/\*\s*bonhomme:symbol=(?P<id>[0-9a-fA-F-]{36})\s*\*/)?\s*\{",
     )?;
+    let function_re = Regex::new(
+        r"(?m)^\s*(?P<signature>(?:export\s+)?(?:async\s+)?function\s+(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*\([^)]*\)\s*(?::\s*[^/{]+)?)(?:\s*/\*\s*bonhomme:symbol=(?P<id>[0-9a-fA-F-]{36})\s*\*/)?\s*\{",
+    )?;
 
     let file_symbol_id = file_id_re
         .captures(&file.content)
@@ -824,6 +956,7 @@ pub fn parse_file(file: &RenderedFile) -> Result<ParsedFile> {
     let mut classes = Vec::new();
     let bytes = file.content.as_bytes();
     let mut offset = 0;
+    let mut class_ranges = Vec::new();
 
     while let Some(captures) = class_re.captures(&file.content[offset..]) {
         let whole = captures.get(0).expect("class regex has full match");
@@ -840,6 +973,7 @@ pub fn parse_file(file: &RenderedFile) -> Result<ParsedFile> {
             .with_context(|| format!("class {name} has no matching closing brace"))?;
         let body = &file.content[open_brace + 1..close_brace];
         let methods = parse_methods(body, symbol_id, &method_re)?;
+        class_ranges.push((offset + whole.start(), close_brace + 1));
 
         classes.push(ParsedClass {
             symbol_id,
@@ -854,7 +988,60 @@ pub fn parse_file(file: &RenderedFile) -> Result<ParsedFile> {
         path: file.path.clone(),
         file_symbol_id,
         classes,
+        functions: parse_top_level_functions(&file.content, &class_ranges, &function_re)?,
     })
+}
+
+fn parse_top_level_functions(
+    content: &str,
+    class_ranges: &[(usize, usize)],
+    function_re: &Regex,
+) -> Result<Vec<ParsedFunction>> {
+    let mut functions = Vec::new();
+    let bytes = content.as_bytes();
+
+    for captures in function_re.captures_iter(content) {
+        let whole = captures.get(0).expect("function regex has full match");
+        if class_ranges
+            .iter()
+            .any(|(start, end)| whole.start() >= *start && whole.start() < *end)
+        {
+            continue;
+        }
+
+        let open_brace = whole.end() - 1;
+        let close_brace = matching_brace(bytes, open_brace)
+            .with_context(|| format!("function at byte {} has no closing brace", whole.start()))?;
+        let name = captures
+            .name("name")
+            .expect("function regex captures name")
+            .as_str()
+            .to_string();
+        let signature = captures
+            .name("signature")
+            .expect("function regex captures signature")
+            .as_str()
+            .trim()
+            .to_string();
+        let symbol_id = captures
+            .name("id")
+            .and_then(|capture| Uuid::parse_str(capture.as_str()).ok());
+        let body = content[open_brace + 1..close_brace]
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        functions.push(ParsedFunction {
+            symbol_id,
+            name,
+            signature,
+            body,
+        });
+    }
+
+    Ok(functions)
 }
 
 fn parse_methods(
@@ -1096,6 +1283,136 @@ export class OrderService {
         let display_name_id = graph.find_symbol("displayName")[0].id;
         assert_eq!(graph.find_callers(display_name_id).len(), 1);
         assert_eq!(graph.find_callees(display_name_id).len(), 1);
+
+        validate_typescript_files(&rendered).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn diff_slice_imports_new_files_as_create_operations() {
+        let modified = vec![RenderedFile {
+            path: "src/Inventory.ts".to_string(),
+            content: r#"
+export function describeInventory(count: number): string {
+  return `inventory:${count}`;
+}
+"#
+            .to_string(),
+        }];
+        let operations = diff_slice(&[], &modified).unwrap();
+        let records = operations
+            .into_iter()
+            .enumerate()
+            .map(|(index, operation)| record(index as i64 + 1, operation))
+            .collect::<Vec<_>>();
+        let graph = materialize(&records).unwrap();
+        let rendered = render_files(&graph);
+
+        assert_eq!(graph.find_symbol("Inventory.ts").len(), 1);
+        assert_eq!(graph.find_symbol("describeInventory").len(), 1);
+        assert!(rendered[0].content.contains("describeInventory"));
+
+        validate_typescript_files(&rendered).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn diff_slice_updates_and_deletes_top_level_functions() {
+        let file_id = Uuid::new_v4();
+        let format_id = Uuid::new_v4();
+        let unused_id = Uuid::new_v4();
+        let original = vec![RenderedFile {
+            path: "src/format.ts".to_string(),
+            content: format!(
+                r#"// bonhomme:file={file_id}
+
+export function formatOrder(id: string): string /* bonhomme:symbol={format_id} */ {{
+  return id;
+}}
+
+export function unused(): string /* bonhomme:symbol={unused_id} */ {{
+  return "unused";
+}}
+"#
+            ),
+        }];
+        let modified = vec![RenderedFile {
+            path: "src/format.ts".to_string(),
+            content: format!(
+                r#"// bonhomme:file={file_id}
+
+export function formatOrder(id: string): string /* bonhomme:symbol={format_id} */ {{
+  return id.toUpperCase();
+}}
+"#
+            ),
+        }];
+        let operations = diff_slice(&original, &modified).unwrap();
+
+        assert!(matches!(
+            operations[0],
+            Operation::DeleteSymbol {
+                symbol_id
+            } if symbol_id == unused_id
+        ));
+        assert!(matches!(
+            operations[1],
+            Operation::UpdateSymbol {
+                symbol_id,
+                ..
+            } if symbol_id == format_id
+        ));
+
+        let mut records = vec![
+            record(
+                1,
+                Operation::CreateSymbol {
+                    symbol_id: file_id,
+                    parent_id: None,
+                    kind: "file".to_string(),
+                    name: "format.ts".to_string(),
+                    body: None,
+                    metadata: json!({"path": "src/format.ts"}),
+                },
+            ),
+            record(
+                2,
+                Operation::CreateSymbol {
+                    symbol_id: format_id,
+                    parent_id: Some(file_id),
+                    kind: "function".to_string(),
+                    name: "formatOrder".to_string(),
+                    body: Some("return id;".to_string()),
+                    metadata: json!({
+                        "declaration": "export function formatOrder(id: string): string",
+                        "exported": true
+                    }),
+                },
+            ),
+            record(
+                3,
+                Operation::CreateSymbol {
+                    symbol_id: unused_id,
+                    parent_id: Some(file_id),
+                    kind: "function".to_string(),
+                    name: "unused".to_string(),
+                    body: Some("return \"unused\";".to_string()),
+                    metadata: json!({
+                        "declaration": "export function unused(): string",
+                        "exported": true
+                    }),
+                },
+            ),
+        ];
+        records.extend(
+            operations
+                .into_iter()
+                .enumerate()
+                .map(|(index, operation)| record(index as i64 + 4, operation)),
+        );
+        let graph = materialize(&records).unwrap();
+        let rendered = render_files(&graph);
+
+        assert_eq!(graph.find_symbol("unused").len(), 0);
+        assert!(rendered[0].content.contains("id.toUpperCase()"));
 
         validate_typescript_files(&rendered).await.unwrap();
     }
