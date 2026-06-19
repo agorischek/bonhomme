@@ -435,11 +435,14 @@ impl SemanticGraph {
         references
     }
 
-    pub fn find_callers(&self, symbol_id: Uuid) -> Vec<&SymbolNode> {
+    /// Symbols that reference `symbol_id` through an edge of the given `kind`. The kind is a
+    /// parameter (rather than a hard-coded "calls") so the core holds no language-specific
+    /// relationship vocabulary — that lives in the language plugin / caller.
+    pub fn find_callers(&self, symbol_id: Uuid, kind: &str) -> Vec<&SymbolNode> {
         let mut callers = self
             .references
             .values()
-            .filter(|reference| reference.kind == "calls" && reference.to_symbol_id == symbol_id)
+            .filter(|reference| reference.kind == kind && reference.to_symbol_id == symbol_id)
             .filter_map(|reference| self.symbols.get(&reference.from_symbol_id))
             .collect::<Vec<_>>();
         sort_symbols_by_ordinal(&mut callers);
@@ -447,11 +450,12 @@ impl SemanticGraph {
         callers
     }
 
-    pub fn find_callees(&self, symbol_id: Uuid) -> Vec<&SymbolNode> {
+    /// Symbols that `symbol_id` references through an edge of the given `kind`.
+    pub fn find_callees(&self, symbol_id: Uuid, kind: &str) -> Vec<&SymbolNode> {
         let mut callees = self
             .references
             .values()
-            .filter(|reference| reference.kind == "calls" && reference.from_symbol_id == symbol_id)
+            .filter(|reference| reference.kind == kind && reference.from_symbol_id == symbol_id)
             .filter_map(|reference| self.symbols.get(&reference.to_symbol_id))
             .collect::<Vec<_>>();
         sort_symbols_by_ordinal(&mut callees);

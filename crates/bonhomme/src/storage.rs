@@ -2,30 +2,33 @@ use crate::core::{
     Branch, ChangeSet, MergeConflict, MergeOutcome, Operation, OperationRecord, Repository,
     SemanticGraph, Task, analyze_merge, materialize,
 };
-use crate::ts::{RenderedFile, render_files, validate_typescript_files};
+use crate::lang::{LanguagePlugin, RenderedFile};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{FromRow, PgPool, postgres::PgPoolOptions};
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 use uuid::Uuid;
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://bonhomme:bonhomme@localhost:54329/bonhomme";
 
+/// The storage / merge engine. It is language-agnostic: every render, validate, import, and diff
+/// goes through the injected [`LanguagePlugin`], so this module never depends on `ts`.
 #[derive(Clone)]
 pub struct Storage {
     pool: PgPool,
+    plugin: Arc<dyn LanguagePlugin>,
 }
 
 impl Storage {
-    pub async fn connect(database_url: &str) -> Result<Self> {
+    pub async fn connect(database_url: &str, plugin: Arc<dyn LanguagePlugin>) -> Result<Self> {
         let pool = PgPoolOptions::new()
             .max_connections(12)
             .connect(database_url)
             .await
             .with_context(|| format!("failed to connect to Postgres at {database_url}"))?;
-        Ok(Self { pool })
+        Ok(Self { pool, plugin })
     }
 
     pub async fn migrate(&self) -> Result<()> {
@@ -34,6 +37,12 @@ impl Storage {
             .await
             .context("failed to run database migrations")?;
         Ok(())
+    }
+
+    /// The configured language backend. The CLI/simulation layers render, import, diff, and
+    /// validate through this rather than calling a concrete language module directly.
+    pub fn plugin(&self) -> &dyn LanguagePlugin {
+        self.plugin.as_ref()
     }
 
     pub async fn init_repository(&self, name: &str) -> Result<(Repository, Branch)> {
@@ -402,7 +411,7 @@ impl Storage {
         }
 
         let graph = materialize(&operations)?;
-        let files = render_files(&graph);
+        let files = self.plugin.render(&graph);
         self.store_graph_cache(
             repository.id,
             branch.id,
@@ -529,8 +538,8 @@ impl Storage {
                 }
             }
             if analysis.outcome == MergeOutcome::SafeMerge {
-                let files = render_files(&target_graph);
-                if let Err(error) = validate_typescript_files(&files).await {
+                let files = self.plugin.render(&target_graph);
+                if let Err(error) = self.plugin.validate(&files).await {
                     analysis.outcome = MergeOutcome::Conflict;
                     analysis.conflicts.push(MergeConflict {
                         reason: "TSC_REJECTED".to_string(),
@@ -555,7 +564,7 @@ impl Storage {
                 target_branch: target,
                 appended_operations: Vec::new(),
                 target_position: target_operations.len() as i64,
-                files: render_files(&graph),
+                files: self.plugin.render(&graph),
             });
         }
 
@@ -597,7 +606,7 @@ impl Storage {
             target_branch: target,
             appended_operations: appended,
             target_position: updated_operations.len() as i64,
-            files: render_files(&graph),
+            files: self.plugin.render(&graph),
         })
     }
 

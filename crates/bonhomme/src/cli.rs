@@ -3,15 +3,24 @@ use crate::core::{SemanticGraph, SymbolNode};
 use crate::demo::{DEMO_REPOSITORY, SpawnAgentsRequest, reset_demo, spawn_agents};
 use crate::simulation::{SimulationRequest, run_simulation};
 use crate::storage::{DEFAULT_DATABASE_URL, Storage};
-use crate::ts::{
-    RenderedFile, diff_slice, import_typescript_files, read_typescript_tree, render_slice,
-    validate_typescript_files,
-};
+use crate::lang::RenderedFile;
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use serde_json::json;
-use std::{net::SocketAddr, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::fs;
+
+/// The reference-edge kind the TypeScript plugin uses for call relationships. Lives in the
+/// TS-aware CLI layer rather than `core`, which is language-agnostic.
+const CALL_REFERENCE_KIND: &str = "calls";
+
+fn select_callers(graph: &SemanticGraph, symbol_id: uuid::Uuid) -> Vec<&SymbolNode> {
+    graph.find_callers(symbol_id, CALL_REFERENCE_KIND)
+}
+
+fn select_callees(graph: &SemanticGraph, symbol_id: uuid::Uuid) -> Vec<&SymbolNode> {
+    graph.find_callees(symbol_id, CALL_REFERENCE_KIND)
+}
 
 #[derive(Parser)]
 #[command(name = "bonhomme")]
@@ -228,7 +237,8 @@ pub async fn run() -> Result<()> {
     match cli.command {
         Command::Server(args) => api::serve(Some(cli.database_url), args.addr).await,
         command => {
-            let storage = Storage::connect(&cli.database_url).await?;
+            let storage =
+                Storage::connect(&cli.database_url, Arc::new(crate::ts::TypeScriptPlugin)).await?;
             storage.migrate().await?;
             run_storage_command(storage, command).await
         }
@@ -255,8 +265,8 @@ async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
                 let branch = storage.branch_by_name(repository.id, &args.branch).await?;
                 (repository, branch)
             };
-            let files = read_typescript_tree(&args.path)?;
-            let operations = import_typescript_files(&files)?;
+            let files = storage.plugin().read_source_tree(&args.path)?;
+            let operations = storage.plugin().import(&files)?;
             let task = storage
                 .create_task(
                     repository.id,
@@ -295,7 +305,7 @@ async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
             let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
             materialized.graph.validate()?;
             if !args.no_validate {
-                validate_typescript_files(&materialized.files).await?;
+                storage.plugin().validate(&materialized.files).await?;
             }
             println!(
                 "{}",
@@ -339,7 +349,7 @@ async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
                 } else {
                     Vec::new()
                 };
-                let slice = render_slice(
+                let slice = storage.plugin().render_slice(
                     &materialized.graph,
                     format!(
                         "{}@{}",
@@ -355,7 +365,7 @@ async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
                 let branch = storage.branch_by_name(repository.id, &args.branch).await?;
                 let original = read_rendered_files(&args.original).await?;
                 let modified = read_rendered_files(&args.modified).await?;
-                let operations = diff_slice(&original, &modified)?;
+                let operations = storage.plugin().diff(&original, &modified)?;
                 let task = storage.create_task(repository.id, &args.title).await?;
                 let changeset = storage
                     .create_changeset(repository.id, task.id, branch.id, &args.title, &args.agent)
@@ -380,7 +390,7 @@ async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
         Command::Validate(args) => {
             let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
             materialized.graph.validate()?;
-            validate_typescript_files(&materialized.files).await?;
+            storage.plugin().validate(&materialized.files).await?;
             println!(
                 "OK {}@{}: {} symbols, {} references",
                 materialized.branch.name,
@@ -424,10 +434,10 @@ async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&references)?);
             }
             QueryCommand::FindCallers(args) => {
-                print_related_symbols(&storage, &args, SemanticGraph::find_callers).await?
+                print_related_symbols(&storage, &args, select_callers).await?
             }
             QueryCommand::FindCallees(args) => {
-                print_related_symbols(&storage, &args, SemanticGraph::find_callees).await?
+                print_related_symbols(&storage, &args, select_callees).await?
             }
             QueryCommand::FindDependencies(args) => {
                 print_related_symbols(&storage, &args, SemanticGraph::find_dependencies).await?

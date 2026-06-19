@@ -11,20 +11,44 @@ use std::{
 use tokio::{fs, process::Command, time};
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct RenderedFile {
-    pub path: String,
-    pub content: String,
-}
+pub use crate::lang::{RenderedFile, Slice};
+use crate::lang::{LanguagePlugin, ValidateFuture};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Slice {
-    pub id: Uuid,
-    pub base_revision: String,
-    pub root_symbols: Vec<Uuid>,
-    pub files: Vec<RenderedFile>,
+/// The TypeScript implementation of [`LanguagePlugin`]. A zero-sized handle that routes the
+/// engine's render/import/diff/validate calls to this module's TypeScript-specific functions, so
+/// `core` and `storage` never depend on TypeScript directly.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TypeScriptPlugin;
+
+impl LanguagePlugin for TypeScriptPlugin {
+    fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
+        render_files(graph)
+    }
+
+    fn render_slice(
+        &self,
+        graph: &SemanticGraph,
+        base_revision: String,
+        root_symbols: Vec<Uuid>,
+    ) -> Slice {
+        render_slice(graph, base_revision, root_symbols)
+    }
+
+    fn import(&self, files: &[RenderedFile]) -> Result<Vec<Operation>> {
+        import_typescript_files(files)
+    }
+
+    fn diff(&self, original: &[RenderedFile], modified: &[RenderedFile]) -> Result<Vec<Operation>> {
+        diff_slice(original, modified)
+    }
+
+    fn read_source_tree(&self, root: &Path) -> Result<Vec<RenderedFile>> {
+        read_typescript_tree(root)
+    }
+
+    fn validate<'a>(&'a self, files: &'a [RenderedFile]) -> ValidateFuture<'a> {
+        Box::pin(validate_typescript_files(files))
+    }
 }
 
 pub fn render_files(graph: &SemanticGraph) -> Vec<RenderedFile> {
@@ -1425,8 +1449,8 @@ export class OrderService {
         assert_eq!(graph.find_symbol("OrderService").len(), 1);
         assert_eq!(graph.find_symbol("displayName").len(), 1);
         let display_name_id = graph.find_symbol("displayName")[0].id;
-        assert_eq!(graph.find_callers(display_name_id).len(), 1);
-        assert_eq!(graph.find_callees(display_name_id).len(), 1);
+        assert_eq!(graph.find_callers(display_name_id, "calls").len(), 1);
+        assert_eq!(graph.find_callees(display_name_id, "calls").len(), 1);
 
         validate_typescript_files(&rendered).await.unwrap();
     }

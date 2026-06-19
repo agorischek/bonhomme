@@ -2,6 +2,7 @@ mod api;
 mod cli;
 mod core;
 mod demo;
+mod lang;
 mod simulation;
 mod storage;
 mod ts;

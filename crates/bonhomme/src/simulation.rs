@@ -2,7 +2,6 @@ use crate::demo::{
     BranchStatus, DEMO_REPOSITORY, SpawnAgentsRequest, demo_state, reset_demo, spawn_agents,
 };
 use crate::storage::Storage;
-use crate::ts::validate_typescript_files;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -102,7 +101,7 @@ pub async fn run_simulation(
 
     let first = storage.materialize_branch(DEMO_REPOSITORY, "main").await?;
     first.graph.validate()?;
-    validate_typescript_files(&first.files).await?;
+    storage.plugin().validate(&first.files).await?;
     let second = storage.materialize_branch(DEMO_REPOSITORY, "main").await?;
 
     Ok(SimulationResult {
