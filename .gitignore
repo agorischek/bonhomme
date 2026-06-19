@@ -1,0 +1,5 @@
+target/
+demo/node_modules/
+demo/dist/
+.env
+.DS_Store
