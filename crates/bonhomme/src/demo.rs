@@ -204,7 +204,7 @@ pub async fn demo_state(storage: &Storage) -> Result<DemoState> {
 
     let mut summaries = Vec::new();
     for branch in &branches {
-        summaries.push(branch_summary(storage, branch, &materialized.main_graph()).await?);
+        summaries.push(branch_summary(storage, branch, &materialized.graph).await?);
     }
 
     let operations = operation_records
@@ -364,7 +364,7 @@ async fn spawn_one_agent(
         )
         .await?;
 
-    let conflict_slot = include_conflicts && number % 11 == 0;
+    let conflict_slot = include_conflicts && number.is_multiple_of(11);
     let method_name = if conflict_slot {
         "sharedAudit".to_string()
     } else {
@@ -458,11 +458,11 @@ async fn branch_summary(
         own_operation_count: own_operations.len(),
         created_symbol_count: created_symbol_ids.len(),
         created_method_names,
-        created_by: branch
-            .name
-            .strip_prefix("agent-")
-            .map(|_| branch.name.clone())
-            .unwrap_or_else(|| "system".to_string()),
+        created_by: if branch.name.starts_with("agent-") {
+            branch.name.clone()
+        } else {
+            "system".to_string()
+        },
     })
 }
 
@@ -512,15 +512,5 @@ fn operation_view(
             }
         }),
         symbol_kind,
-    }
-}
-
-trait MaterializedDemoExt {
-    fn main_graph(&self) -> SemanticGraph;
-}
-
-impl MaterializedDemoExt for crate::storage::MaterializedBranch {
-    fn main_graph(&self) -> SemanticGraph {
-        self.graph.clone()
     }
 }

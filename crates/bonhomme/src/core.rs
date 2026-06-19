@@ -146,6 +146,34 @@ impl Operation {
             _ => None,
         }
     }
+
+    pub fn deleted_symbol_id(&self) -> Option<Uuid> {
+        match self {
+            Operation::DeleteSymbol { symbol_id } => Some(*symbol_id),
+            _ => None,
+        }
+    }
+
+    pub fn reference_endpoints(&self) -> Option<(Uuid, Uuid)> {
+        match self {
+            Operation::CreateReference {
+                from_symbol_id,
+                to_symbol_id,
+                ..
+            } => Some((*from_symbol_id, *to_symbol_id)),
+            _ => None,
+        }
+    }
+
+    /// The reference id that this operation creates or deletes, if any. Mirrors
+    /// [`write_symbols`] so the merge analyzer can treat reference edits as a write set.
+    pub fn write_references(&self) -> Option<Uuid> {
+        match self {
+            Operation::CreateReference { reference_id, .. }
+            | Operation::DeleteReference { reference_id } => Some(*reference_id),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -206,10 +234,10 @@ impl SemanticGraph {
                 if self.symbols.contains_key(symbol_id) {
                     bail!("duplicate symbol id {symbol_id}");
                 }
-                if let Some(parent_id) = parent_id {
-                    if !self.symbols.contains_key(parent_id) {
-                        bail!("parent symbol {parent_id} does not exist");
-                    }
+                if let Some(parent_id) = parent_id
+                    && !self.symbols.contains_key(parent_id)
+                {
+                    bail!("parent symbol {parent_id} does not exist");
                 }
                 if self.has_symbol_named(*parent_id, kind, name, None) {
                     bail!("duplicate {kind} symbol named {name}");
@@ -256,15 +284,10 @@ impl SemanticGraph {
                     self.symbols.get(symbol_id).cloned().ok_or_else(|| {
                         anyhow::anyhow!("cannot update missing symbol {symbol_id}")
                     })?;
-                if let Some(name) = name {
-                    if self.has_symbol_named(
-                        current.parent_id,
-                        &current.kind,
-                        name,
-                        Some(*symbol_id),
-                    ) {
-                        bail!("duplicate {} symbol named {}", current.kind, name);
-                    }
+                if let Some(name) = name
+                    && self.has_symbol_named(current.parent_id, &current.kind, name, Some(*symbol_id))
+                {
+                    bail!("duplicate {} symbol named {}", current.kind, name);
                 }
 
                 let symbol = self.symbols.get_mut(symbol_id).expect("checked above");
@@ -312,17 +335,16 @@ impl SemanticGraph {
         }
 
         self.applied_operations.push(operation_id);
-        self.validate()?;
         Ok(())
     }
 
     pub fn validate(&self) -> Result<()> {
         let mut symbol_keys = BTreeSet::new();
         for symbol in self.symbols.values() {
-            if let Some(parent_id) = symbol.parent_id {
-                if !self.symbols.contains_key(&parent_id) {
-                    bail!("symbol {} has dangling parent {parent_id}", symbol.id);
-                }
+            if let Some(parent_id) = symbol.parent_id
+                && !self.symbols.contains_key(&parent_id)
+            {
+                bail!("symbol {} has dangling parent {parent_id}", symbol.id);
             }
             let key = SymbolNameKey {
                 parent_id: symbol.parent_id,
@@ -387,35 +409,49 @@ impl SemanticGraph {
     }
 
     pub fn find_symbol(&self, name: &str) -> Vec<&SymbolNode> {
-        self.symbols
+        let mut symbols = self
+            .symbols
             .values()
             .filter(|symbol| symbol.name == name)
-            .collect()
+            .collect::<Vec<_>>();
+        sort_symbols_by_ordinal(&mut symbols);
+        symbols
     }
 
     pub fn find_references(&self, symbol_id: Uuid) -> Vec<&ReferenceNode> {
-        self.references
+        let mut references = self
+            .references
             .values()
             .filter(|reference| {
                 reference.from_symbol_id == symbol_id || reference.to_symbol_id == symbol_id
             })
-            .collect()
+            .collect::<Vec<_>>();
+        references.sort_by(|a, b| a.ordinal.cmp(&b.ordinal).then_with(|| a.id.cmp(&b.id)));
+        references
     }
 
     pub fn find_callers(&self, symbol_id: Uuid) -> Vec<&SymbolNode> {
-        self.references
+        let mut callers = self
+            .references
             .values()
             .filter(|reference| reference.kind == "calls" && reference.to_symbol_id == symbol_id)
             .filter_map(|reference| self.symbols.get(&reference.from_symbol_id))
-            .collect()
+            .collect::<Vec<_>>();
+        sort_symbols_by_ordinal(&mut callers);
+        callers.dedup_by_key(|symbol| symbol.id);
+        callers
     }
 
     pub fn find_callees(&self, symbol_id: Uuid) -> Vec<&SymbolNode> {
-        self.references
+        let mut callees = self
+            .references
             .values()
             .filter(|reference| reference.kind == "calls" && reference.from_symbol_id == symbol_id)
             .filter_map(|reference| self.symbols.get(&reference.to_symbol_id))
-            .collect()
+            .collect::<Vec<_>>();
+        sort_symbols_by_ordinal(&mut callees);
+        callees.dedup_by_key(|symbol| symbol.id);
+        callees
     }
 
     pub fn find_dependencies(&self, symbol_id: Uuid) -> Vec<&SymbolNode> {
@@ -425,7 +461,7 @@ impl SemanticGraph {
             .filter(|reference| reference.from_symbol_id == symbol_id)
             .filter_map(|reference| self.symbols.get(&reference.to_symbol_id))
             .collect::<Vec<_>>();
-        dependencies.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        sort_symbols_by_ordinal(&mut dependencies);
         dependencies.dedup_by_key(|symbol| symbol.id);
         dependencies
     }
@@ -437,7 +473,7 @@ impl SemanticGraph {
             .filter(|reference| reference.to_symbol_id == symbol_id)
             .filter_map(|reference| self.symbols.get(&reference.from_symbol_id))
             .collect::<Vec<_>>();
-        dependents.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+        sort_symbols_by_ordinal(&mut dependents);
         dependents.dedup_by_key(|symbol| symbol.id);
         dependents
     }
@@ -458,11 +494,20 @@ impl SemanticGraph {
     }
 }
 
+/// Sort symbol references by creation order (ordinal) with a stable id tiebreak, so every
+/// query method surfaces results in source order rather than arbitrary `Uuid` key order.
+fn sort_symbols_by_ordinal(symbols: &mut [&SymbolNode]) {
+    symbols.sort_by(|a, b| a.ordinal.cmp(&b.ordinal).then_with(|| a.id.cmp(&b.id)));
+}
+
 pub fn materialize(records: &[OperationRecord]) -> Result<SemanticGraph> {
     let mut graph = SemanticGraph::default();
     for record in records {
         graph.apply_record(record)?;
     }
+    // Per-op create/delete checks maintain every invariant incrementally; a single
+    // full validation at the end confirms the result without paying O(n^2) per replay.
+    graph.validate()?;
     Ok(graph)
 }
 
@@ -501,56 +546,51 @@ pub fn analyze_merge(
             if let (Some(source_id), Some(target_id)) = (
                 source.operation.created_symbol_id(),
                 target.operation.created_symbol_id(),
-            ) {
-                if source_id == target_id {
-                    conflicts.push(MergeConflict {
-                        reason: "DUPLICATE_SYMBOL_ID".to_string(),
-                        source_operation_id: source.id,
-                        target_operation_id: Some(target.id),
-                        symbol_id: Some(source_id),
-                        detail: format!("both branches create symbol {source_id}"),
-                    });
-                }
+            ) && source_id == target_id
+            {
+                conflicts.push(MergeConflict {
+                    reason: "DUPLICATE_SYMBOL_ID".to_string(),
+                    source_operation_id: source.id,
+                    target_operation_id: Some(target.id),
+                    symbol_id: Some(source_id),
+                    detail: format!("both branches create symbol {source_id}"),
+                });
             }
 
             if let (Some(source_id), Some(target_id)) = (
                 source.operation.created_reference_id(),
                 target.operation.created_reference_id(),
-            ) {
-                if source_id == target_id {
-                    conflicts.push(MergeConflict {
-                        reason: "DUPLICATE_REFERENCE_ID".to_string(),
-                        source_operation_id: source.id,
-                        target_operation_id: Some(target.id),
-                        symbol_id: None,
-                        detail: format!("both branches create reference {source_id}"),
-                    });
-                }
+            ) && source_id == target_id
+            {
+                conflicts.push(MergeConflict {
+                    reason: "DUPLICATE_REFERENCE_ID".to_string(),
+                    source_operation_id: source.id,
+                    target_operation_id: Some(target.id),
+                    symbol_id: None,
+                    detail: format!("both branches create reference {source_id}"),
+                });
             }
 
             if let (Some(source_key), Some(target_key)) = (
                 source.operation.created_symbol_key(),
                 target.operation.created_symbol_key(),
-            ) {
-                if source_key == target_key {
-                    conflicts.push(MergeConflict {
-                        reason: "DUPLICATE_SYMBOL_NAME".to_string(),
-                        source_operation_id: source.id,
-                        target_operation_id: Some(target.id),
-                        symbol_id: source.operation.created_symbol_id(),
-                        detail: format!(
-                            "both branches create {} named {} under {:?}",
-                            source_key.kind, source_key.name, source_key.parent_id
-                        ),
-                    });
-                }
+            ) && source_key == target_key
+            {
+                conflicts.push(MergeConflict {
+                    reason: "DUPLICATE_SYMBOL_NAME".to_string(),
+                    source_operation_id: source.id,
+                    target_operation_id: Some(target.id),
+                    symbol_id: source.operation.created_symbol_id(),
+                    detail: format!(
+                        "both branches create {} named {} under {:?}",
+                        source_key.kind, source_key.name, source_key.parent_id
+                    ),
+                });
             }
 
             let source_writes = source.operation.write_symbols();
             let target_writes = target.operation.write_symbols();
-            let overlapping_symbol = source_writes.intersection(&target_writes).copied().next();
-
-            if let Some(symbol_id) = overlapping_symbol {
+            if let Some(symbol_id) = source_writes.intersection(&target_writes).copied().next() {
                 let source_create = source.operation.created_symbol_id() == Some(symbol_id);
                 let target_create = target.operation.created_symbol_id() == Some(symbol_id);
                 if !(source_create && target_create) {
@@ -562,6 +602,32 @@ pub fn analyze_merge(
                         detail: format!("both branches write symbol {symbol_id}"),
                     });
                 }
+            }
+
+            if let Some(reference_id) =
+                overlapping_reference_write(&source.operation, &target.operation)
+            {
+                conflicts.push(MergeConflict {
+                    reason: "OVERLAPPING_REFERENCE_WRITE".to_string(),
+                    source_operation_id: source.id,
+                    target_operation_id: Some(target.id),
+                    symbol_id: None,
+                    detail: format!("both branches write reference {reference_id}"),
+                });
+            }
+
+            if let Some(symbol_id) =
+                reference_to_deleted_symbol(&source.operation, &target.operation)
+            {
+                conflicts.push(MergeConflict {
+                    reason: "REFERENCE_TO_DELETED_SYMBOL".to_string(),
+                    source_operation_id: source.id,
+                    target_operation_id: Some(target.id),
+                    symbol_id: Some(symbol_id),
+                    detail: format!(
+                        "one branch references symbol {symbol_id} that the other branch deletes"
+                    ),
+                });
             }
         }
     }
@@ -582,6 +648,31 @@ pub fn analyze_merge(
         },
         conflicts,
     }
+}
+
+/// Two operations conflict when both touch the same reference id and not both merely create it
+/// (e.g. both delete it, or one creates while the other deletes). Mirrors the symbol write-set
+/// check so reference edits are caught up front instead of only at replay.
+fn overlapping_reference_write(source: &Operation, target: &Operation) -> Option<Uuid> {
+    let source_ref = source.write_references()?;
+    let target_ref = target.write_references()?;
+    if source_ref != target_ref {
+        return None;
+    }
+    let both_create = source.created_reference_id() == Some(source_ref)
+        && target.created_reference_id() == Some(target_ref);
+    (!both_create).then_some(source_ref)
+}
+
+/// One branch creating a reference whose endpoint the other branch deletes always yields a
+/// dangling reference after merge. Detect it statically rather than relying on replay to bail.
+fn reference_to_deleted_symbol(source: &Operation, target: &Operation) -> Option<Uuid> {
+    fn check(reference: &Operation, delete: &Operation) -> Option<Uuid> {
+        let (from, to) = reference.reference_endpoints()?;
+        let deleted = delete.deleted_symbol_id()?;
+        (from == deleted || to == deleted).then_some(deleted)
+    }
+    check(source, target).or_else(|| check(target, source))
 }
 
 pub fn metadata_string(metadata: &Value, key: &str) -> Option<String> {
@@ -724,6 +815,49 @@ mod tests {
         let analysis = analyze_merge(&target, &source);
 
         assert_eq!(analysis.outcome, MergeOutcome::SafeMerge);
+    }
+
+    #[test]
+    fn reference_to_symbol_deleted_by_target_conflicts() {
+        let from_id = Uuid::new_v4();
+        let to_id = Uuid::new_v4();
+        let source = vec![record(
+            1,
+            Operation::CreateReference {
+                reference_id: Uuid::new_v4(),
+                from_symbol_id: from_id,
+                to_symbol_id: to_id,
+                kind: "calls".to_string(),
+            },
+        )];
+        let target = vec![record(1, Operation::DeleteSymbol { symbol_id: to_id })];
+
+        let analysis = analyze_merge(&target, &source);
+
+        assert_eq!(analysis.outcome, MergeOutcome::Conflict);
+        assert!(
+            analysis
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.reason == "REFERENCE_TO_DELETED_SYMBOL")
+        );
+    }
+
+    #[test]
+    fn concurrent_reference_deletes_conflict() {
+        let reference_id = Uuid::new_v4();
+        let source = vec![record(1, Operation::DeleteReference { reference_id })];
+        let target = vec![record(1, Operation::DeleteReference { reference_id })];
+
+        let analysis = analyze_merge(&target, &source);
+
+        assert_eq!(analysis.outcome, MergeOutcome::Conflict);
+        assert!(
+            analysis
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.reason == "OVERLAPPING_REFERENCE_WRITE")
+        );
     }
 
     #[test]

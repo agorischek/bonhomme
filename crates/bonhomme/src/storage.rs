@@ -1,6 +1,6 @@
 use crate::core::{
-    Branch, ChangeSet, MergeAnalysis, MergeConflict, MergeOutcome, Operation, OperationRecord,
-    Repository, SemanticGraph, Task, analyze_merge, materialize,
+    Branch, ChangeSet, MergeConflict, MergeOutcome, Operation, OperationRecord, Repository,
+    SemanticGraph, Task, analyze_merge, materialize,
 };
 use crate::ts::{RenderedFile, render_files, validate_typescript_files};
 use anyhow::{Context, Result, bail};
@@ -104,13 +104,14 @@ impl Storage {
         let base = self.branch_by_name(repository_id, base_name).await?;
         let base_position = self.collect_branch_operations(base.id, None).await?.len() as i64;
         let id = Uuid::new_v4();
+        // The fork point (base_position) is immutable. If the branch already exists we return it
+        // unchanged rather than advancing base_position to the current base length, which would
+        // silently drop concurrent target operations from later merge analysis.
         let row = sqlx::query_as::<_, BranchRow>(
             r#"
             INSERT INTO branches (id, repository_id, name, base_branch_id, base_position)
             VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (repository_id, name) DO UPDATE
-            SET base_branch_id = EXCLUDED.base_branch_id,
-                base_position = EXCLUDED.base_position
+            ON CONFLICT (repository_id, name) DO NOTHING
             RETURNING id, repository_id, name, base_branch_id, base_position, created_at
             "#,
         )
@@ -119,9 +120,12 @@ impl Storage {
         .bind(name)
         .bind(base.id)
         .bind(base_position)
-        .fetch_one(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
-        Ok(row.into())
+        match row {
+            Some(row) => Ok(row.into()),
+            None => self.branch_by_name(repository_id, name).await,
+        }
     }
 
     pub async fn branch_by_name(&self, repository_id: Uuid, name: &str) -> Result<Branch> {
@@ -219,13 +223,21 @@ impl Storage {
         changeset_id: Uuid,
         operation: Operation,
     ) -> Result<OperationRecord> {
+        let payload = serde_json::to_value(&operation)?;
+        let mut tx = self.pool.begin().await?;
+        // Serialize position allocation per branch with a transaction-scoped advisory lock so two
+        // concurrent appends cannot both read the same MAX(position) and collide on the
+        // UNIQUE(branch_id, position) constraint.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)")
+            .bind(branch_id.to_string())
+            .execute(&mut *tx)
+            .await?;
         let next_position: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(position), 0) + 1 FROM operations WHERE branch_id = $1",
         )
         .bind(branch_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
-        let payload = serde_json::to_value(&operation)?;
         let row = sqlx::query_as::<_, OperationRow>(
             r#"
             INSERT INTO operations (id, repository_id, branch_id, changeset_id, position, op_type, payload)
@@ -240,8 +252,9 @@ impl Storage {
         .bind(next_position)
         .bind(operation.op_type())
         .bind(payload)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+        tx.commit().await?;
         row.try_into()
     }
 
@@ -281,7 +294,7 @@ impl Storage {
             SELECT id, repository_id, branch_id, changeset_id, position, op_type, payload, created_at
             FROM operations
             WHERE repository_id = $1
-            ORDER BY created_at, position, id
+            ORDER BY created_at, branch_id, position
             "#,
         )
         .bind(repository_id)
@@ -807,6 +820,3 @@ fn operation_fingerprint(operations: &[OperationRecord]) -> String {
         .collect::<Vec<_>>()
         .join("|")
 }
-
-#[allow(dead_code)]
-fn _assert_merge_analysis_send_sync(_: MergeAnalysis) {}

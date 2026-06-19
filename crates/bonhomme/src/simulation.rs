@@ -71,6 +71,11 @@ pub async fn run_simulation(
             .map(|branch| branch.name.clone())
             .collect::<Vec<_>>();
 
+        // The simulation deliberately merges in a stable *shuffled* order (FNV hash of the branch
+        // name) to exercise non-sequential merge ordering, whereas the interactive demo merges
+        // branches alphabetically. Both paths are independently deterministic; because ordinals are
+        // assigned at append time, the two entry points can render the same agents in a different
+        // sibling order. That divergence is intentional, not a determinism bug.
         ready.sort_by(|left, right| {
             stable_branch_order_key(left)
                 .cmp(&stable_branch_order_key(right))

@@ -130,10 +130,21 @@ impl From<anyhow::Error> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        // Classify client-driven failures (missing repo/branch/symbol, unsupported merge shape) as
+        // 4xx so they are not conflated with genuine server faults. The anyhow chain carries no
+        // typed status, so we inspect its rendered message.
+        let message = format!("{:#}", self.0);
+        let status = if message.contains("does not exist") || message.contains("not found") {
+            StatusCode::NOT_FOUND
+        } else if message.contains("only supports") || message.contains("not supported") {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
         let body = Json(ErrorBody {
             error: self.0.to_string(),
         });
-        (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+        (status, body).into_response()
     }
 }
 

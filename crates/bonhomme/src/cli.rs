@@ -1,4 +1,5 @@
 use crate::api;
+use crate::core::{SemanticGraph, SymbolNode};
 use crate::demo::{DEMO_REPOSITORY, SpawnAgentsRequest, reset_demo, spawn_agents};
 use crate::simulation::{SimulationRequest, run_simulation};
 use crate::storage::{DEFAULT_DATABASE_URL, Storage};
@@ -176,6 +177,9 @@ struct SimulateArgs {
 }
 
 #[derive(Subcommand)]
+// CLI subcommand names derive from these variant identifiers, so the shared `Find` prefix is
+// intentional and renaming would break the command surface.
+#[allow(clippy::enum_variant_names)]
 enum QueryCommand {
     FindSymbol(FindSymbolArgs),
     FindReferences(FindSymbolArgs),
@@ -415,58 +419,21 @@ async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
             }
             QueryCommand::FindReferences(args) => {
                 let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
-                let symbol = materialized
-                    .graph
-                    .find_symbol(&args.name)
-                    .first()
-                    .copied()
-                    .with_context(|| format!("symbol {} not found", args.name))?;
+                let symbol = resolve_symbol(&materialized.graph, &args.name)?;
                 let references = materialized.graph.find_references(symbol.id);
                 println!("{}", serde_json::to_string_pretty(&references)?);
             }
             QueryCommand::FindCallers(args) => {
-                let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
-                let symbol = materialized
-                    .graph
-                    .find_symbol(&args.name)
-                    .first()
-                    .copied()
-                    .with_context(|| format!("symbol {} not found", args.name))?;
-                let callers = materialized.graph.find_callers(symbol.id);
-                println!("{}", serde_json::to_string_pretty(&callers)?);
+                print_related_symbols(&storage, &args, SemanticGraph::find_callers).await?
             }
             QueryCommand::FindCallees(args) => {
-                let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
-                let symbol = materialized
-                    .graph
-                    .find_symbol(&args.name)
-                    .first()
-                    .copied()
-                    .with_context(|| format!("symbol {} not found", args.name))?;
-                let callees = materialized.graph.find_callees(symbol.id);
-                println!("{}", serde_json::to_string_pretty(&callees)?);
+                print_related_symbols(&storage, &args, SemanticGraph::find_callees).await?
             }
             QueryCommand::FindDependencies(args) => {
-                let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
-                let symbol = materialized
-                    .graph
-                    .find_symbol(&args.name)
-                    .first()
-                    .copied()
-                    .with_context(|| format!("symbol {} not found", args.name))?;
-                let dependencies = materialized.graph.find_dependencies(symbol.id);
-                println!("{}", serde_json::to_string_pretty(&dependencies)?);
+                print_related_symbols(&storage, &args, SemanticGraph::find_dependencies).await?
             }
             QueryCommand::FindDependents(args) => {
-                let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
-                let symbol = materialized
-                    .graph
-                    .find_symbol(&args.name)
-                    .first()
-                    .copied()
-                    .with_context(|| format!("symbol {} not found", args.name))?;
-                let dependents = materialized.graph.find_dependents(symbol.id);
-                println!("{}", serde_json::to_string_pretty(&dependents)?);
+                print_related_symbols(&storage, &args, SemanticGraph::find_dependents).await?
             }
         },
         Command::Demo { command } => match command {
@@ -511,6 +478,28 @@ async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
         },
     }
 
+    Ok(())
+}
+
+fn resolve_symbol<'g>(graph: &'g SemanticGraph, name: &str) -> Result<&'g SymbolNode> {
+    graph
+        .find_symbol(name)
+        .first()
+        .copied()
+        .with_context(|| format!("symbol {name} not found"))
+}
+
+/// Shared driver for the relationship queries that resolve a symbol by name and print the symbols
+/// it relates to (callers/callees/dependencies/dependents), passed as a graph method.
+async fn print_related_symbols(
+    storage: &Storage,
+    args: &FindSymbolArgs,
+    select: fn(&SemanticGraph, uuid::Uuid) -> Vec<&SymbolNode>,
+) -> Result<()> {
+    let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
+    let symbol = resolve_symbol(&materialized.graph, &args.name)?;
+    let related = select(&materialized.graph, symbol.id);
+    println!("{}", serde_json::to_string_pretty(&related)?);
     Ok(())
 }
 
