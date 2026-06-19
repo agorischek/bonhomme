@@ -1,8 +1,8 @@
 use crate::demo::{
     BranchStatus, DEMO_REPOSITORY, SpawnAgentsRequest, demo_state, reset_demo, spawn_agents,
 };
-use crate::storage::Storage;
 use anyhow::Result;
+use bonhomme_engine::Storage;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

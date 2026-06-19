@@ -1,9 +1,8 @@
-use crate::core::{
-    Branch, ChangeSet, MergeConflict, MergeOutcome, Operation, OperationRecord, Repository,
-    SemanticGraph, Task, analyze_merge, materialize,
-};
-use crate::lang::{LanguagePlugin, RenderedFile};
 use anyhow::{Context, Result, bail};
+use bonhomme_core::{
+    Branch, ChangeSet, LanguagePlugin, MergeConflict, MergeOutcome, Operation, OperationRecord,
+    RenderedFile, Repository, SemanticGraph, Task, analyze_merge, materialize,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -3,8 +3,8 @@ use crate::demo::{
     reset_demo, spawn_agents,
 };
 use crate::simulation::{SimulationRequest, SimulationResult, run_simulation};
-use crate::storage::{DEFAULT_DATABASE_URL, MergeResult, Storage};
 use anyhow::Result;
+use bonhomme_engine::{DEFAULT_DATABASE_URL, MergeResult, Storage};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -27,7 +27,7 @@ pub async fn serve(database_url: Option<String>, addr: SocketAddr) -> Result<()>
     let database_url = database_url.unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string());
     let storage = Storage::connect(
         &database_url,
-        std::sync::Arc::new(crate::ts::TypeScriptPlugin),
+        std::sync::Arc::new(bonhomme_ts::TypeScriptPlugin),
     )
     .await?;
     storage.migrate().await?;
@@ -110,7 +110,7 @@ async fn simulate(
 async fn render_branch(
     State(state): State<AppState>,
     Path((repo, branch)): Path<(String, String)>,
-) -> ApiResult<crate::storage::MaterializedBranch> {
+) -> ApiResult<bonhomme_engine::MaterializedBranch> {
     Ok(Json(
         state.storage.materialize_branch(&repo, &branch).await?,
     ))

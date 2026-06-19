@@ -1,8 +1,36 @@
 [workspace]
-members = ["crates/bonhomme"]
+members = [
+    "crates/bonhomme-core",
+    "crates/bonhomme-ts",
+    "crates/bonhomme-engine",
+    "crates/bonhomme",
+]
 resolver = "2"
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/agorischek/bonhomme"
+
+[workspace.dependencies]
+# Internal crates
+bonhomme-core = { path = "crates/bonhomme-core" }
+bonhomme-ts = { path = "crates/bonhomme-ts" }
+bonhomme-engine = { path = "crates/bonhomme-engine" }
+
+# External crates (features are enabled per-consumer by listing the dependency)
+anyhow = "1.0"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+dotenvy = "0.15"
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "process", "fs", "time"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.18", features = ["serde", "v4", "v5"] }
+proptest = "1.9"

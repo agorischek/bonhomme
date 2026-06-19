@@ -1,10 +1,9 @@
 use crate::api;
-use crate::core::{SemanticGraph, SymbolNode};
 use crate::demo::{DEMO_REPOSITORY, SpawnAgentsRequest, reset_demo, spawn_agents};
-use crate::lang::RenderedFile;
 use crate::simulation::{SimulationRequest, run_simulation};
-use crate::storage::{DEFAULT_DATABASE_URL, Storage};
 use anyhow::{Context, Result};
+use bonhomme_core::{RenderedFile, SemanticGraph, SymbolNode};
+use bonhomme_engine::{DEFAULT_DATABASE_URL, Storage};
 use clap::{Args, Parser, Subcommand};
 use serde_json::json;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
@@ -238,7 +237,7 @@ pub async fn run() -> Result<()> {
         Command::Server(args) => api::serve(Some(cli.database_url), args.addr).await,
         command => {
             let storage =
-                Storage::connect(&cli.database_url, Arc::new(crate::ts::TypeScriptPlugin)).await?;
+                Storage::connect(&cli.database_url, Arc::new(bonhomme_ts::TypeScriptPlugin)).await?;
             storage.migrate().await?;
             run_storage_command(storage, command).await
         }

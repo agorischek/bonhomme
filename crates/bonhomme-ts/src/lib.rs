@@ -1,5 +1,8 @@
-use crate::core::{Operation, SemanticGraph, SymbolNode, metadata_bool, metadata_string};
 use anyhow::{Context, Result, bail};
+use bonhomme_core::{
+    LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, SymbolNode, ValidateFuture,
+    metadata_bool, metadata_string,
+};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -10,9 +13,6 @@ use std::{
 };
 use tokio::{fs, process::Command, time};
 use uuid::Uuid;
-
-use crate::lang::{LanguagePlugin, ValidateFuture};
-pub use crate::lang::{RenderedFile, Slice};
 
 /// The TypeScript implementation of [`LanguagePlugin`]. A zero-sized handle that routes the
 /// engine's render/import/diff/validate calls to this module's TypeScript-specific functions, so
@@ -1346,7 +1346,7 @@ fn matching_brace(bytes: &[u8], open_brace: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::{OperationRecord, materialize};
+    use bonhomme_core::{OperationRecord, materialize};
     use chrono::{TimeZone, Utc};
 
     fn record(position: i64, operation: Operation) -> OperationRecord {

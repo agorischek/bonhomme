@@ -1,9 +1,9 @@
-use crate::core::{
-    Branch, ChangeSet, Operation, OperationRecord, Repository, SemanticGraph, Task, metadata_string,
-};
-use crate::lang::RenderedFile;
-use crate::storage::{MergeResult, Storage};
 use anyhow::Result;
+use bonhomme_core::{
+    Branch, ChangeSet, Operation, OperationRecord, RenderedFile, Repository, SemanticGraph, Task,
+    metadata_string,
+};
+use bonhomme_engine::{MergeResult, Storage};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
