@@ -18,8 +18,9 @@ pub struct Config {
     /// Per-language toolchain binary paths. `typescript`/`tsc`, `python`/`python3`, and `dotnet`
     /// are wired at the composition root; other plugins can opt in without changing the schema.
     pub toolchain: BTreeMap<String, String>,
-    /// Reserved: per-language formatter applied at the checkout boundary. Parsed, not yet wired.
-    #[allow(dead_code)]
+    /// Per-extension formatter commands applied at the write/compare boundary (see `crate::format`).
+    /// Keyed by file extension; the command reads content on stdin and writes the formatted result
+    /// to stdout, e.g. `rs = "rustfmt"`, `ts = "prettier --stdin-filepath {path}"`.
     pub format: BTreeMap<String, String>,
     /// Git integration mode — gates write-back into the working tree (`bonhomme session land`).
     pub git: GitConfig,

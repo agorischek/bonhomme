@@ -171,7 +171,11 @@ fn resolve_session_ref(
 /// Import `src` into a throwaway in-memory session and render it straight back, reporting how
 /// faithfully each file reproduces. Side-effect-free: it touches neither the configured database
 /// nor the disk.
-pub async fn check(plugin: Arc<dyn LanguagePlugin>, src: &Path) -> Result<RoundtripReport> {
+pub async fn check(
+    plugin: Arc<dyn LanguagePlugin>,
+    src: &Path,
+    formatters: &BTreeMap<String, String>,
+) -> Result<RoundtripReport> {
     let storage = Storage::connect(":memory:", plugin).await?;
     storage.migrate().await?;
     let (repository, branch) = storage.init_repository("roundtrip").await?;
@@ -200,7 +204,10 @@ pub async fn check(plugin: Arc<dyn LanguagePlugin>, src: &Path) -> Result<Roundt
     let materialized = storage
         .materialize_branch("roundtrip", &branch.name)
         .await?;
-    Ok(RoundtripReport::compare(source_files, materialized.files))
+    // Format the rendered side exactly as `land` would, so the gate measures what landing actually
+    // writes against the on-disk source rather than flagging the repo's own formatting.
+    let rendered = crate::format::format_files(materialized.files, formatters).await;
+    Ok(RoundtripReport::compare(source_files, rendered))
 }
 
 async fn repository_exists(storage: &Storage, name: &str) -> Result<bool> {
@@ -559,7 +566,12 @@ pub(super) async fn run(
         }
         SessionCommand::Check(args) => {
             let path = args.path.unwrap_or_else(|| root.to_path_buf());
-            let report = check(crate::plugins::language_registry(config), &path).await?;
+            let report = check(
+                crate::plugins::language_registry(config),
+                &path,
+                &config.format,
+            )
+            .await?;
             report.print(&path);
             if !report.is_clean() {
                 bail!(
@@ -639,7 +651,10 @@ pub(super) async fn run(
             })?;
             let changed_paths =
                 changed_file_paths_since(&base.graph, &materialized.graph, changed_operations);
-            let stats = land_changed_files(&materialized.files, &dest, &changed_paths).await?;
+            // Apply the configured formatter to what we write, so a touched file lands matching the
+            // repo's style instead of bonhomme's canonical render.
+            let files = crate::format::format_files(materialized.files, &config.format).await;
+            let stats = land_changed_files(&files, &dest, &changed_paths).await?;
             println!(
                 "landed {} changed files into {} ({} removed, {} touched paths since op {})",
                 stats.written,
@@ -666,9 +681,13 @@ mod tests {
         std::fs::write(dir.join("notes.txt"), "hello\nworld\n").unwrap();
         std::fs::write(dir.join("docs").join("blob.bin"), [0u8, 1, 2, 3, 0, 255]).unwrap();
 
-        let report = check(crate::plugins::language_registry(&Config::default()), &dir)
-            .await
-            .unwrap();
+        let report = check(
+            crate::plugins::language_registry(&Config::default()),
+            &dir,
+            &BTreeMap::new(),
+        )
+        .await
+        .unwrap();
 
         assert!(
             report.is_clean(),

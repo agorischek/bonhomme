@@ -3,6 +3,7 @@ mod cli;
 mod config;
 mod demo;
 mod explorer;
+mod format;
 mod plugins;
 mod simulation;
 
