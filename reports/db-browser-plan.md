@@ -1,6 +1,13 @@
 # Plan: A Browser for a bonhomme Repository
 
-**Status:** proposed. Builds on the existing React/Vite demo and axum read API.
+**Status:** implemented (B1–B6) as a "Browse" view in the demo app, read-only over
+`/api/demo/state`, using GitHub Primer React. Shipped: the symbol tree, symbol
+detail with a Code/Semantic toggle, the references/provenance/semantic-blame
+inspector, the agent/branch dashboard, a changeset-review semantic diff, a radial
+reference graph, and a time-travel scrubber (client-side, by symbol ordinal).
+Remaining: **B0** — the repo-agnostic backend read API (currently demo-repo only),
+which would also enable server-side time-travel (`?asOf=`) and a per-symbol-history
+endpoint instead of the client-side approximation.
 **Companion reading:** [core-premise.md](core-premise.md) (files are projections),
 [structural-identity-plan.md](structural-identity-plan.md) (the clean-render toggle),
 [fallback-handlers-plan.md](fallback-handlers-plan.md) (blobs in the tree).
