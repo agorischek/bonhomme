@@ -52,6 +52,16 @@ pub trait LanguagePlugin: Send + Sync {
     /// Diff an edited slice against its original projection, producing operations.
     fn diff(&self, original: &[RenderedFile], modified: &[RenderedFile]) -> Result<Vec<Operation>>;
 
+    /// Recover operations from edited source by matching it against an authoritative graph
+    /// snapshot. This is the graph-anchored structural path used when slice provenance is
+    /// available; `diff` remains the legacy two-blob path.
+    fn recover_operations(
+        &self,
+        base: &SemanticGraph,
+        scope: &[Uuid],
+        edited: &[RenderedFile],
+    ) -> Result<Vec<Operation>>;
+
     /// Read a source tree from disk into rendered files, applying the language's file conventions
     /// (extensions, ignored directories, generated files).
     fn read_source_tree(&self, root: &Path) -> Result<Vec<RenderedFile>>;

@@ -2,7 +2,7 @@ use crate::{
     CacheStatus, MaterializedBranch, Storage,
     rows::{GraphCacheRow, operation_fingerprint},
 };
-use anyhow::Result;
+use anyhow::{Result, bail};
 use bonhomme_core::{RenderedFile, SemanticGraph, materialize};
 use uuid::Uuid;
 
@@ -43,6 +43,39 @@ impl Storage {
             &files,
         )
         .await?;
+        Ok(MaterializedBranch {
+            repository,
+            branch,
+            operations,
+            graph,
+            files,
+            cache_status: CacheStatus::Miss,
+        })
+    }
+
+    pub async fn materialize_branch_at_position(
+        &self,
+        branch_id: Uuid,
+        operation_count: i64,
+    ) -> Result<MaterializedBranch> {
+        if operation_count < 0 {
+            bail!("operation position must be non-negative");
+        }
+        let branch = self.branch_by_id(branch_id).await?;
+        let repository = self.repository_by_id(branch.repository_id).await?;
+        let operations = self
+            .collect_branch_operations(branch.id, Some(operation_count))
+            .await?;
+        if operations.len() as i64 != operation_count {
+            bail!(
+                "branch {} has {} visible operations, not {}",
+                branch.name,
+                operations.len(),
+                operation_count
+            );
+        }
+        let graph = materialize(&operations)?;
+        let files = self.plugin.render(&graph);
         Ok(MaterializedBranch {
             repository,
             branch,

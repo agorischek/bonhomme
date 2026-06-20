@@ -3,7 +3,7 @@ mod merge;
 mod models;
 mod rows;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use bonhomme_core::{
     Branch, ChangeSet, LanguagePlugin, Operation, OperationRecord, Repository, Task,
 };
@@ -12,8 +12,10 @@ use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{future::Future, pin::Pin, sync::Arc};
 use uuid::Uuid;
 
-pub use models::{Attachment, CacheStatus, MaterializedBranch, MergeResult};
-use rows::{AttachmentRow, BranchRow, ChangeSetRow, OperationRow, RepositoryRow, TaskRow};
+pub use models::{Attachment, CacheStatus, MaterializedBranch, MergeResult, StoredSlice};
+use rows::{
+    AttachmentRow, BranchRow, ChangeSetRow, OperationRow, RepositoryRow, SliceRow, TaskRow,
+};
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://bonhomme:bonhomme@localhost:54329/bonhomme";
 
@@ -88,6 +90,17 @@ impl Storage {
         .fetch_one(&self.pool)
         .await
         .with_context(|| format!("repository {name} does not exist"))?;
+        Ok(row.into())
+    }
+
+    pub async fn repository_by_id(&self, id: Uuid) -> Result<Repository> {
+        let row = sqlx::query_as::<_, RepositoryRow>(
+            "SELECT id, name, created_at FROM repositories WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| format!("repository {id} does not exist"))?;
         Ok(row.into())
     }
 
@@ -314,6 +327,50 @@ impl Storage {
         .fetch_all(&self.pool)
         .await?;
         rows.into_iter().map(TryInto::try_into).collect()
+    }
+
+    pub async fn create_slice(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        base_position: i64,
+        root_symbols: &[Uuid],
+    ) -> Result<StoredSlice> {
+        let branch = self.branch_by_id(branch_id).await?;
+        if branch.repository_id != repository_id {
+            bail!("branch {branch_id} does not belong to repository {repository_id}");
+        }
+
+        let row = sqlx::query_as::<_, SliceRow>(
+            r#"
+            INSERT INTO slices (id, repository_id, branch_id, base_position, root_symbols)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id, repository_id, branch_id, base_position, root_symbols, created_at
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(repository_id)
+        .bind(branch_id)
+        .bind(base_position)
+        .bind(serde_json::to_value(root_symbols)?)
+        .fetch_one(&self.pool)
+        .await?;
+        row.try_into()
+    }
+
+    pub async fn slice_by_id(&self, slice_id: Uuid) -> Result<StoredSlice> {
+        let row = sqlx::query_as::<_, SliceRow>(
+            r#"
+            SELECT id, repository_id, branch_id, base_position, root_symbols, created_at
+            FROM slices
+            WHERE id = $1
+            "#,
+        )
+        .bind(slice_id)
+        .fetch_one(&self.pool)
+        .await
+        .with_context(|| format!("slice {slice_id} does not exist"))?;
+        row.try_into()
     }
 
     pub async fn list_own_operations(

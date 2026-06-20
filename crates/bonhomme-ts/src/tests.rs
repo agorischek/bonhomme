@@ -1,3 +1,5 @@
+mod recover;
+
 use crate::{diff_slice, import_typescript_files, render_files, validate_typescript_files};
 use bonhomme_core::{
     Operation, OperationRecord, RenderedFile, SemanticGraph, materialize, metadata_string,
@@ -243,17 +245,28 @@ export function formatOrder(id: string): string /* bonhomme:symbol={format_id} *
 }
 
 fn import_graph(content: &str) -> SemanticGraph {
-    let files = vec![RenderedFile {
-        path: "src/Sample.ts".to_string(),
-        content: content.to_string(),
-    }];
-    let operations = import_typescript_files(&files).unwrap();
+    materialize_operations(import_operations(content))
+}
+
+fn import_operations(content: &str) -> Vec<Operation> {
+    let files = vec![sample_file(content)];
+    import_typescript_files(&files).unwrap()
+}
+
+fn materialize_operations(operations: Vec<Operation>) -> SemanticGraph {
     let records = operations
         .into_iter()
         .enumerate()
         .map(|(index, operation)| record(index as i64 + 1, operation))
         .collect::<Vec<_>>();
     materialize(&records).unwrap()
+}
+
+fn sample_file(content: &str) -> RenderedFile {
+    RenderedFile {
+        path: "src/Sample.ts".to_string(),
+        content: content.to_string(),
+    }
 }
 
 #[test]

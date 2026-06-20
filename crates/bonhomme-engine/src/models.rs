@@ -47,3 +47,14 @@ pub struct Attachment {
     pub payload: Value,
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredSlice {
+    pub id: Uuid,
+    pub repository_id: Uuid,
+    pub branch_id: Uuid,
+    pub base_position: i64,
+    pub root_symbols: Vec<Uuid>,
+    pub created_at: DateTime<Utc>,
+}

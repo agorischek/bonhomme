@@ -1,6 +1,6 @@
 use crate::demo::{DEMO_REPOSITORY, SpawnAgentsRequest, reset_demo, spawn_agents};
 use crate::simulation::{SimulationRequest, run_simulation};
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use bonhomme_engine::Storage;
 use serde_json::json;
 use tokio::fs;
@@ -116,23 +116,66 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
                 } else {
                     Vec::new()
                 };
-                let slice = storage.plugin().render_slice(
+                let base_position = materialized.operations.len() as i64;
+                let stored_slice = storage
+                    .create_slice(
+                        materialized.repository.id,
+                        materialized.branch.id,
+                        base_position,
+                        &root_symbols,
+                    )
+                    .await?;
+                let mut slice = storage.plugin().render_slice(
                     &materialized.graph,
-                    format!(
-                        "{}@{}",
-                        materialized.branch.name,
-                        materialized.operations.len()
-                    ),
+                    format!("{}@{}", materialized.branch.name, base_position),
                     root_symbols,
                 );
+                slice.id = stored_slice.id;
                 println!("{}", serde_json::to_string_pretty(&slice)?);
             }
             SliceCommand::Apply(args) => {
                 let repository = storage.repository_by_name(&args.repo).await?;
-                let branch = storage.branch_by_name(repository.id, &args.branch).await?;
-                let original = read_rendered_files(&args.original).await?;
                 let modified = read_rendered_files(&args.modified).await?;
-                let operations = storage.plugin().diff(&original, &modified)?;
+                let (branch, operations) = if let Some(slice_id) = args.slice_id {
+                    let stored_slice = storage.slice_by_id(slice_id).await?;
+                    if stored_slice.repository_id != repository.id {
+                        bail!(
+                            "slice {slice_id} does not belong to repository {}",
+                            args.repo
+                        );
+                    }
+                    let branch = storage.branch_by_id(stored_slice.branch_id).await?;
+                    let current_position = storage
+                        .collect_branch_operations(branch.id, None)
+                        .await?
+                        .len() as i64;
+                    if current_position != stored_slice.base_position {
+                        bail!(
+                            "stale slice {slice_id}: cut at {}@{}, branch is now at {}; stale apply is not implemented yet",
+                            branch.name,
+                            stored_slice.base_position,
+                            current_position
+                        );
+                    }
+                    let materialized = storage
+                        .materialize_branch_at_position(branch.id, stored_slice.base_position)
+                        .await?;
+                    let operations = storage.plugin().recover_operations(
+                        &materialized.graph,
+                        &stored_slice.root_symbols,
+                        &modified,
+                    )?;
+                    (branch, operations)
+                } else {
+                    let branch = storage.branch_by_name(repository.id, &args.branch).await?;
+                    let original_path = args
+                        .original
+                        .as_ref()
+                        .context("slice apply without --slice-id requires --original")?;
+                    let original = read_rendered_files(original_path).await?;
+                    let operations = storage.plugin().diff(&original, &modified)?;
+                    (branch, operations)
+                };
                 let task = storage.create_task(repository.id, &args.title).await?;
                 let changeset = storage
                     .create_changeset(repository.id, task.id, branch.id, &args.title, &args.agent)

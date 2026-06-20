@@ -1,6 +1,6 @@
 # Plan: Structural Identity Recovery (drop in-text symbol comments)
 
-**Status:** proposed. Depends on the in-progress oxc AST migration of `bonhomme-ts`.
+**Status:** in progress. P0-P2 are implemented; P3 clean rendering is next.
 **Companion reading:** [core-premise.md](core-premise.md) (why files are projections),
 [related-work.md](related-work.md) (Unison / structured-merge lineage).
 
@@ -45,9 +45,10 @@ annotation.
 - `diff_slice(original, modified)` is **stateless**: it parses two supplied text
   blobs and matches by id-then-name. The new `ensure_unique_symbol_ids` guard
   rejects a slice that reuses an id.
-- No slice provenance is persisted. `Slice { id, base_revision, root_symbols }` is
-  rendered then discarded; `slice apply` takes `--original`/`--modified` files and
-  never references a base revision.
+- Slice provenance is persisted. `slice create` records the branch, base operation
+  position, and root symbols, then returns a slice ID. `slice apply --slice-id`
+  recovers against that stored base graph; `--original`/`--modified` remains as a
+  legacy two-file diff path.
 - The engine can already materialize the graph at any point:
   `collect_branch_operations(branch, Some(base_position))` + `materialize`.
 
@@ -164,11 +165,11 @@ with the premise's "do not guess" while not taxing every edit.
 
 Each phase is independently shippable and keeps the suite green.
 
-- **P0 — oxc parsing.** (in progress) AST-based `ParsedFile`. No behavior change.
-- **P1 — matcher behind the comments.** Build `recover_operations` and prove
+- **P0 — oxc parsing.** Implemented. AST-based `ParsedFile`. No behavior change.
+- **P1 — matcher behind the comments.** Implemented. Build `recover_operations` and prove
   equivalence: on inputs that *still have* comments, it produces the same ops as
   the comment path. Drop-in, fully tested, no rendering change yet.
-- **P2 — provenance.** Add the `slices` table + `slice create`/`slice apply
+- **P2 — provenance.** Implemented. Add the `slices` table + `slice create`/`slice apply
   --slice-id`; engine materializes the base graph and calls the matcher. Old
   `--original/--modified` path stays as legacy.
 - **P3 — clean render.** Stop emitting `bonhomme:symbol=` / `bonhomme:file=`

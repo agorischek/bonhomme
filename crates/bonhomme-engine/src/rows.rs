@@ -1,4 +1,4 @@
-use crate::Attachment;
+use crate::{Attachment, StoredSlice};
 use anyhow::Result;
 use bonhomme_core::{Branch, ChangeSet, OperationRecord, Repository, Task};
 use chrono::{DateTime, Utc};
@@ -130,9 +130,35 @@ pub(crate) struct AttachmentRow {
 }
 
 #[derive(FromRow)]
+pub(crate) struct SliceRow {
+    id: Uuid,
+    repository_id: Uuid,
+    branch_id: Uuid,
+    base_position: i64,
+    root_symbols: Value,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
 pub(crate) struct GraphCacheRow {
     pub(crate) graph: Value,
     pub(crate) rendered_files: Value,
+}
+
+impl TryFrom<SliceRow> for StoredSlice {
+    type Error = anyhow::Error;
+
+    fn try_from(row: SliceRow) -> Result<Self> {
+        let root_symbols = serde_json::from_value(row.root_symbols)?;
+        Ok(Self {
+            id: row.id,
+            repository_id: row.repository_id,
+            branch_id: row.branch_id,
+            base_position: row.base_position,
+            root_symbols,
+            created_at: row.created_at,
+        })
+    }
 }
 
 impl From<AttachmentRow> for Attachment {

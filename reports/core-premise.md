@@ -283,7 +283,9 @@ The current bonhomme prototype implements the core shape of the system:
 - Graph validation
 - TypeScript rendering with hidden symbol metadata
 - Conservative TypeScript import for common constructs
-- Slice diff for method edits, top-level function edits, deletes, and new files
+- Legacy slice diff for method edits, top-level function edits, deletes, and new files
+- Stored slice provenance for branch, base position, and root symbols
+- Graph-anchored structural operation recovery for stored slices
 - Operation-level merge with `SAFE_MERGE` or `CONFLICT`
 - TypeScript compiler validation after merge
 - Query commands for symbols, references, callers, callees, dependencies, and dependents

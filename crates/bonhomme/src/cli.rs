@@ -9,6 +9,7 @@ use bonhomme_engine::{DEFAULT_DATABASE_URL, Storage};
 use clap::{Args, Parser, Subcommand};
 use commands::run_storage_command;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(name = "bonhomme")]
@@ -125,14 +126,16 @@ struct SliceCreateArgs {
 struct SliceApplyArgs {
     #[arg(long, default_value = DEMO_REPOSITORY)]
     repo: String,
-    #[arg(long)]
+    #[arg(long, default_value = "main")]
     branch: String,
     #[arg(long, default_value = "Apply edited TypeScript slice")]
     title: String,
     #[arg(long, default_value = "agent")]
     agent: String,
     #[arg(long)]
-    original: PathBuf,
+    slice_id: Option<Uuid>,
+    #[arg(long)]
+    original: Option<PathBuf>,
     #[arg(long)]
     modified: PathBuf,
 }

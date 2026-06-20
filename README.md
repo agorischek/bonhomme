@@ -87,9 +87,13 @@ bonhomme branch create --repo bonhomme-demo --name agent-a --base main
 bonhomme demo spawn --count 32
 bonhomme demo merge-all
 bonhomme simulate --agents 128
+bonhomme slice create --repo bonhomme-demo --branch main --symbol OrderService > slice.json
+bonhomme slice apply --repo bonhomme-demo --slice-id <slice-id> --modified edited-slice.json
 bonhomme render --repo bonhomme-demo --branch main --out rendered
 bonhomme query find-symbol --repo bonhomme-demo --branch main --name OrderService
 bonhomme query find-dependencies --repo imported-ts --branch main --name displayName
 ```
 
 `bonhomme simulate` resets the demo repository, creates deterministic agent branches, merges them in a stable shuffled order, validates replay/render determinism, and runs `tsc` on the final rendered TypeScript.
+
+`bonhomme slice create` persists slice provenance: the branch, operation position, and root symbols used to render the editable projection. `bonhomme slice apply --slice-id` uses that stored base graph to recover semantic operations from the edited slice. The older `--original/--modified` apply path is still available as a legacy two-file diff.

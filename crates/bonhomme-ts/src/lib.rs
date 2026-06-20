@@ -2,6 +2,7 @@ mod diff;
 mod import;
 mod oxc_parse;
 mod parse;
+mod recover;
 mod render;
 mod scanner;
 mod source;
@@ -20,6 +21,7 @@ use uuid::Uuid;
 pub use diff::diff_slice;
 pub use import::import_typescript_files;
 pub use parse::{ParsedClass, ParsedFile, ParsedFunction, ParsedMethod, parse_file};
+pub use recover::recover_operations;
 pub use render::{render_files, render_slice};
 pub use source::read_typescript_tree;
 pub use validate::validate_typescript_files;
@@ -50,6 +52,15 @@ impl LanguagePlugin for TypeScriptPlugin {
 
     fn diff(&self, original: &[RenderedFile], modified: &[RenderedFile]) -> Result<Vec<Operation>> {
         diff_slice(original, modified)
+    }
+
+    fn recover_operations(
+        &self,
+        base: &SemanticGraph,
+        scope: &[Uuid],
+        edited: &[RenderedFile],
+    ) -> Result<Vec<Operation>> {
+        recover_operations(base, scope, edited)
     }
 
     fn read_source_tree(&self, root: &Path) -> Result<Vec<RenderedFile>> {
