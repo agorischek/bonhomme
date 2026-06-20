@@ -7,6 +7,7 @@ import { BaseStyles, Spinner, ThemeProvider } from '@primer/react'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
 import type { DemoState } from '../../types'
+import { BranchDashboard } from './BranchDashboard'
 import { branchColor, buildTree } from './graph'
 import { Inspector } from './Inspector'
 import { SymbolDetail } from './SymbolDetail'
@@ -44,6 +45,7 @@ function BrowserBody() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [mode, setMode] = useState<'explorer' | 'branches'>('explorer')
 
   const load = () => {
     setLoading(true)
@@ -56,7 +58,24 @@ function BrowserBody() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(load, [])
+  useEffect(() => {
+    let cancelled = false
+    api<DemoState>('/api/demo/state')
+      .then((next) => {
+        if (cancelled) return
+        setState(next)
+        setError(null)
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const roots = useMemo(() => (state ? buildTree(state.mainGraph.symbols) : []), [state])
   const selected = selectedId && state ? (state.mainGraph.symbols[selectedId] ?? null) : null
@@ -84,6 +103,19 @@ function BrowserBody() {
         <span className="bh-brand">
           <DatabaseIcon size={16} /> bonhomme
         </span>
+        <div className="bh-toggle bh-view-toggle">
+          {(['explorer', 'branches'] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              className={mode === option ? 'bh-toggle-on' : undefined}
+              aria-pressed={mode === option}
+              onClick={() => setMode(option)}
+            >
+              {option === 'explorer' ? 'Explorer' : 'Branches'}
+            </button>
+          ))}
+        </div>
         <span className="bh-chip">
           <DatabaseIcon size={14} /> {state.repository.name}
         </span>
@@ -100,22 +132,35 @@ function BrowserBody() {
         </button>
       </div>
 
-      <div className="bh-main">
-        <div className="bh-pane bh-tree-pane">
-          <div className="bh-pane-title">Symbol tree</div>
-          <SymbolTree roots={roots} selectedId={selectedId} onSelect={setSelectedId} />
+      {mode === 'explorer' ? (
+        <div className="bh-main">
+          <div className="bh-pane bh-tree-pane">
+            <div className="bh-pane-title">Symbol tree</div>
+            <SymbolTree roots={roots} selectedId={selectedId} onSelect={setSelectedId} />
+          </div>
+          <div className="bh-pane">
+            <SymbolDetail state={state} symbol={selected} />
+          </div>
+          <div className="bh-pane">
+            {selected ? (
+              <Inspector state={state} symbol={selected} onSelect={setSelectedId} />
+            ) : (
+              <div className="bh-muted">References, provenance, and history appear here.</div>
+            )}
+          </div>
         </div>
-        <div className="bh-pane">
-          <SymbolDetail state={state} symbol={selected} />
+      ) : (
+        <div className="bh-pane bh-branches-pane">
+          <div className="bh-pane-title">Branches · {state.branches.length}</div>
+          <BranchDashboard
+            state={state}
+            onSelectSymbol={(id) => {
+              setSelectedId(id)
+              setMode('explorer')
+            }}
+          />
         </div>
-        <div className="bh-pane">
-          {selected ? (
-            <Inspector state={state} symbol={selected} onSelect={setSelectedId} />
-          ) : (
-            <div className="bh-muted">References, provenance, and history appear here.</div>
-          )}
-        </div>
-      </div>
+      )}
 
       <div className="bh-pane">
         <Timeline state={state} />

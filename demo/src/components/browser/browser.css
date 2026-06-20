@@ -73,7 +73,7 @@
 /* 3-pane grid */
 .bh-main {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 300px;
+  grid-template-columns: minmax(210px, 250px) minmax(0, 1fr) minmax(250px, 300px);
   gap: 12px;
   min-height: 0;
 }
@@ -218,6 +218,119 @@
   height: 16px;
   border-radius: 2px;
   flex-shrink: 0;
+}
+
+/* segmented toggle (view switch + code/semantic) */
+.bh-toggle {
+  display: inline-flex;
+  border: 1px solid var(--bh-border);
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.bh-toggle button {
+  border: none;
+  background: var(--bh-bg);
+  color: var(--bh-muted);
+  padding: 4px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.bh-toggle button + button {
+  border-left: 1px solid var(--bh-border);
+}
+.bh-toggle button.bh-toggle-on {
+  background: var(--bh-accent);
+  color: #fff;
+}
+
+/* detail head + semantic view */
+.bh-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.bh-detail-head .bh-breadcrumb {
+  margin-bottom: 0;
+}
+.bh-sem-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--bh-border);
+  font-size: 13px;
+}
+.bh-sem-label {
+  color: var(--bh-muted);
+}
+.bh-sem-value {
+  color: var(--bh-fg);
+  word-break: break-word;
+}
+.bh-mono {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+
+/* branch dashboard */
+.bh-branches-pane {
+  overflow: auto;
+}
+.bh-branches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+.bh-branch-card {
+  border: 1px solid var(--bh-border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.bh-branch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.bh-branch-head strong {
+  font-size: 14px;
+}
+.bh-branch-head > :last-child {
+  margin-left: auto;
+}
+.bh-branch-meta {
+  font-size: 12px;
+  color: var(--bh-muted);
+  margin-bottom: 8px;
+}
+.bh-branch-meta code {
+  background: var(--bh-inset);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.bh-branch-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.bh-method-chip {
+  border: 1px solid var(--bh-border);
+  background: var(--bh-inset);
+  color: var(--bh-accent);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.bh-method-chip:hover:not(:disabled) {
+  background: #ddf4ff;
+}
+.bh-method-chip:disabled {
+  color: var(--bh-muted);
+  cursor: default;
 }
 
 /* states */
