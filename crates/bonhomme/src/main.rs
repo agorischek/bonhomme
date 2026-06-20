@@ -1,5 +1,6 @@
 mod api;
 mod cli;
+mod config;
 mod demo;
 mod plugins;
 mod simulation;

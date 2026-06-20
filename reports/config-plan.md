@@ -1,5 +1,11 @@
 # Plan: A Configuration Spine for bonhomme
 
+> **Status:** C1–C3 implemented (`crates/bonhomme/src/config.rs`). `bonhomme.toml`
+> is discovered from the repo root; storage URL precedence is flag > env > file >
+> default; the default is a project-local embedded Turso DB (`turso:.bonhomme/…`),
+> with `postgres://` as an explicit override. Formatter/toolchain/git sections are
+> reserved (parsed, not yet wired) and land with their features.
+
 ## The reframe
 
 The temptation is to "add a config file." That lumps together four different

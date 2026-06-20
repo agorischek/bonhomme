@@ -6,7 +6,7 @@ mod slice_audit;
 use crate::api;
 use crate::demo::DEMO_REPOSITORY;
 use anyhow::Result;
-use bonhomme_engine::{DEFAULT_DATABASE_URL, Storage};
+use bonhomme_engine::Storage;
 use clap::{Args, Parser, Subcommand};
 use commands::run_storage_command;
 use std::{net::SocketAddr, path::PathBuf};
@@ -16,8 +16,10 @@ use uuid::Uuid;
 #[command(name = "bonhomme")]
 #[command(about = "Semantic source control prototype for TypeScript, Go, and Rust")]
 struct Cli {
-    #[arg(long, env = "DATABASE_URL", global = true, default_value = DEFAULT_DATABASE_URL)]
-    database_url: String,
+    /// Storage URL. Precedence: this flag > DATABASE_URL env > bonhomme.toml > the project-local
+    /// Turso default (`turso:.bonhomme/bonhomme.db`). `postgres://…` selects the hosted backend.
+    #[arg(long, env = "DATABASE_URL", global = true)]
+    database_url: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -227,12 +229,14 @@ pub async fn run() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let (config, root) = crate::config::discover(&std::env::current_dir()?)?;
+    let database_url = crate::config::resolve_database_url(cli.database_url, &config, &root);
 
     match cli.command {
-        Command::Server(args) => api::serve(Some(cli.database_url), args.addr).await,
+        Command::Server(args) => api::serve(Some(database_url), args.addr).await,
         command => {
             let storage =
-                Storage::connect(&cli.database_url, crate::plugins::language_registry()).await?;
+                Storage::connect(&database_url, crate::plugins::language_registry()).await?;
             storage.migrate().await?;
             run_storage_command(storage, command).await
         }

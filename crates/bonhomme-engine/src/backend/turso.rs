@@ -89,6 +89,15 @@ pub(crate) struct TursoBackend {
 
 impl TursoBackend {
     pub(crate) async fn connect(path: &str) -> Result<Self> {
+        // Create the parent directory for an on-disk database so a default like
+        // `turso:.bonhomme/bonhomme.db` works on a fresh checkout without manual setup.
+        if path != ":memory:"
+            && let Some(parent) = std::path::Path::new(path).parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating database directory {}", parent.display()))?;
+        }
         let db = Builder::new_local(path)
             .build()
             .await
