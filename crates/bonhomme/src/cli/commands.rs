@@ -182,6 +182,10 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
                         &stored_slice.root_symbols,
                         &modified,
                     )?;
+                    // Collapse delete+create pairs that are actually a move into identity-preserving
+                    // MoveSymbol ops, so a symbol relocated between files/classes keeps its id. Run
+                    // before the merge analysis so conflict detection sees the real move operations.
+                    let operations = bonhomme_core::detect_moves(operations, &materialized.graph);
                     let analysis = storage
                         .analyze_operations_against_branch(
                             branch.id,
