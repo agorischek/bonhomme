@@ -1,7 +1,12 @@
 # Plan: bonhomme as a Local Coauth Session over Git
 
-**Status:** proposed. The adoption wedge — a local, ephemeral semantic merge layer
-for agent swarms that commits to Git, with Git as the durable source of truth.
+**Status:** in progress. The local session wedge has started: `bonhomme session
+start` imports the working tree into `.bonhomme/session.db`, records
+`.bonhomme/session.json` with the base operation position, `session review` opens
+the lightweight explorer over that session, and `session land` writes only paths
+touched after the recorded base. Remaining: session-native merge/apply commands,
+semantic rebase, discard/resume lifecycle, conflict-resolution UX, and the Phase 2
+identity sidecar.
 **Companion reading:** [core-premise.md](core-premise.md) (operations are truth),
 [fallback-handlers-plan.md](fallback-handlers-plan.md) (whole-tree round-trip),
 [db-browser-plan.md](db-browser-plan.md) (the review UI),
@@ -134,6 +139,7 @@ is never a moment where someone bets their history on a prototype.
 ```text
 .bonhomme/
   session.db        # local libSQL, ephemeral — the live session (gitignored)
+  session.json      # local active-session manifest: db URL, repo, branch, base op
   log/              # (Phase 2+) committed op log + symbol-id map, keyed by commit
                     #   so the next session can re-attach identity to renamed/moved code
 ```
@@ -144,14 +150,17 @@ behaves exactly like a normal Git repo.
 
 ## Phased delivery
 
-- **S0 — round-trip fidelity gate (the prerequisite).** `session start` + `session
+- **S0 — round-trip fidelity gate (the prerequisite).** In progress. `session check`
+  verifies import→render fidelity side-effect-free; `session start` + `session
   land` on a clean repo with *no* agent edits must produce an empty `git diff`:
-  byte-identical untouched (blob) files, and formatter-clean touched files. This is
-  the make-or-break; build it first and gate everything on it.
+  byte-identical untouched (blob) files, and formatter-clean touched files.
+  `session land` now writes only files touched after the recorded session base.
 - **S1 — single-session swarm.** Agent fan-out → semantic merge within the session →
-  `tsc`/`go build` gate → `land` only touched files. The core value.
+  `tsc`/`go build` gate → `land` only touched files. The core value. Not yet
+  session-native; existing branch/slice/merge commands still need session-aware
+  wrappers.
 - **S2 — review + rebase.** Wire the browser as `session review`; implement `session
-  rebase` onto a moved working tree.
+  rebase` onto a moved working tree. Review is wired; rebase is not.
 - **S3 — identity sidecar (graduation Phase 2).** Persist the op log + symbol-id map
   to `.bonhomme/log` on `land`; re-attach on the next `start` so identity survives
   renames across sessions.

@@ -1,13 +1,15 @@
 # Plan: A Browser for a bonhomme Repository
 
-**Status:** implemented (B1–B6) as a "Browse" view in the demo app, read-only over
-`/api/demo/state`, using GitHub Primer React. Shipped: the symbol tree, symbol
-detail with a Code/Semantic toggle, the references/provenance/semantic-blame
-inspector, the agent/branch dashboard, a changeset-review semantic diff, a radial
-reference graph, and a time-travel scrubber (client-side, by symbol ordinal).
-Remaining: **B0** — the repo-agnostic backend read API (currently demo-repo only),
-which would also enable server-side time-travel (`?asOf=`) and a per-symbol-history
-endpoint instead of the client-side approximation.
+**Status:** split into two surfaces. `bonhomme explore` now ships a lightweight,
+repo-scoped Axum HTML explorer in the core CLI. It discovers config from the current
+repo root, serves one logical bonhomme repository/branch, supports branch switching,
+server-side `?as_of=`, symbol tree/detail, references, rendered files, and recent
+operation history. The React/Vite app remains the rich development demo over
+`/api/demo/*`, including agent simulations, branch dashboards, semantic review
+experiments, and graph visualizations.
+Remaining: deeper repo-agnostic JSON read APIs, paginated operation feeds, and a
+first-class per-symbol-history endpoint instead of the current composed in-memory
+view.
 **Companion reading:** [core-premise.md](core-premise.md) (files are projections),
 [structural-identity-plan.md](structural-identity-plan.md) (the clean-render toggle),
 [fallback-handlers-plan.md](fallback-handlers-plan.md) (blobs in the tree).
@@ -123,15 +125,19 @@ reads**; everything else composes what's there.
 
 ## Architecture
 
-- **Frontend:** extend the existing `demo/` React/Vite app (it already has an API
-  client and branch/merge panels). The browser is a superset of the demo: the demo's
-  agent panels become view #5.
-- **Backend:** a `read`-only module on the axum API exposing the table above; no
-  engine changes beyond the two new queries. All read paths are pure functions of the
-  log, so they are cache-friendly and safe to expose widely.
-- **Coordination:** a single client-side store holding `{ repo, branch, asOf,
-  selectedSymbolId }`; every panel subscribes. This is what makes "lens on the same
-  selection" cheap.
+- **Core explorer:** `crates/bonhomme/src/explorer.rs`, served by `bonhomme explore`.
+  It is Rust-only Axum HTML, repo-scoped, and configured from the discovered checkout
+  root. There is no Node/Vite/React dependency in the core CLI path.
+- **Demo app:** `demo/` remains a full React/Vite development lab. It can keep richer
+  simulation controls and exploratory visualizations without becoming part of the
+  shipped explorer.
+- **Backend:** read paths are composed from `Storage` (`materialize_branch`,
+  `materialize_branch_at_position`, `list_branches`, `list_operations`). Future
+  dedicated JSON endpoints should mirror those same read models rather than depending
+  on `/api/demo/state`.
+- **Coordination:** the server-rendered explorer carries `{ branch, as_of,
+  selectedSymbolId }` in query parameters; the React demo may continue using
+  client-side state for richer development interactions.
 
 ## Phased delivery
 

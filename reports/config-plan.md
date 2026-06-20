@@ -3,8 +3,9 @@
 > **Status:** C1–C3 implemented (`crates/bonhomme/src/config.rs`). `bonhomme.toml`
 > is discovered from the repo root; storage URL precedence is flag > env > file >
 > default; the default is a project-local embedded Turso DB (`turso:.bonhomme/…`),
-> with `postgres://` as an explicit override. Formatter/toolchain/git sections are
-> reserved (parsed, not yet wired) and land with their features.
+> with `postgres://` as an explicit override. `[toolchain].typescript` now feeds
+> TypeScript validation; `[git].write_back` gates in-place `session land`.
+> Formatter and other toolchain keys remain reserved until their features wire them.
 
 ## The reframe
 
@@ -133,9 +134,10 @@ behavior is unchanged when no file is present.
 # postgres://…  |  turso:PATH  |  sqlite:PATH  |  file:PATH  |  :memory:
 database_url = "turso:.bonhomme/bonhomme.db"
 
-# --- reserved; parsed (deny_unknown_fields stays happy) but not yet acted on ---
 [toolchain]
-# go = "go"            # category 1: binary path/discovery for shell-out plugins
+# typescript = "tsgo"  # category 1: TypeScript validation compiler
+#                    # absent value uses `tsc` from PATH; no package-manager install fallback
+# go = "go"            # reserved for future Go toolchain wiring
 
 [format]
 # rust = "canonical"   # category 2: "canonical" | external command; checkout-time only

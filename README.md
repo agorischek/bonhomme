@@ -1,6 +1,6 @@
 # bonhomme
 
-bonhomme is a Rust/Postgres prototype of a semantic source control system for TypeScript, Go, and Rust repositories.
+bonhomme is a Rust/Postgres prototype of a semantic source control system for TypeScript/JavaScript, Go, Rust, Python, and C# repositories.
 
 The operation log is authoritative. The semantic graph and rendered source files are reconstructed from immutable operations.
 
@@ -9,17 +9,21 @@ See [docs/spec-coverage.md](docs/spec-coverage.md) for the current implementatio
 ## Run locally
 
 ```sh
-docker compose up -d postgres
 cp .env.example .env
-cargo run -p bonhomme -- demo reset
-cargo run -p bonhomme -- server
+cargo run -p bonhomme -- import --repo bonhomme --path examples/typescript-basic --reset
+cargo run -p bonhomme -- explore --repo bonhomme --open
 ```
 
-If Docker Desktop hangs while pulling public images with `error getting credentials`, bypass the broken Desktop credential helper for this project:
+`bonhomme explore` is the core lightweight explorer. It runs one local Axum instance for the
+repository in the current checkout, discovers `bonhomme.toml` from that repo root, and writes the
+last started URL to `.bonhomme/explorer.json`. If no storage URL is configured, bonhomme uses the
+project-local embedded Turso database at `.bonhomme/bonhomme.db`.
+
+The React demo is still available as a development dashboard for simulations:
 
 ```sh
-mkdir -p /tmp/bonhomme-docker-anon
-env DOCKER_CONFIG=/tmp/bonhomme-docker-anon /Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose up -d postgres
+cargo run -p bonhomme -- demo reset
+cargo run -p bonhomme -- server
 ```
 
 In another terminal:
@@ -32,15 +36,44 @@ npm run dev
 
 Open the Vite URL and use the controls to spawn many agent branches, watch them submit semantic operations, and merge them into `main`.
 
-For faster compiler validation during merges, point bonhomme at the demo TypeScript binary:
+If you prefer Postgres for either flow, start the local database and set `DATABASE_URL` or
+`[storage].database_url` in `bonhomme.toml`:
+
+```sh
+docker compose up -d postgres
+```
+
+If Docker Desktop hangs while pulling public images with `error getting credentials`, bypass the broken Desktop credential helper for this project:
+
+```sh
+mkdir -p /tmp/bonhomme-docker-anon
+env DOCKER_CONFIG=/tmp/bonhomme-docker-anon /Applications/Docker.app/Contents/Resources/cli-plugins/docker-compose up -d postgres
+```
+
+TypeScript validation runs an existing compiler only. By default, Bonhomme invokes `tsc` from
+`PATH`; it never installs TypeScript with `npx` or another package manager. To use the demo
+compiler, set:
 
 ```sh
 export BONHOMME_TSC="$PWD/demo/node_modules/.bin/tsc"
 ```
 
+You can also configure a TypeScript-compatible compiler per repo in `bonhomme.toml`:
+
+```toml
+[toolchain]
+typescript = "tsgo" # or a path to tsc
+```
+
+`BONHOMME_TSC` takes precedence over `[toolchain].typescript`; `[toolchain].tsc` is accepted as an alias.
+
 Go support uses the local Go toolchain for parsing, `gofmt`, and validation. Set `BONHOMME_GO` if `go` is not on `PATH`.
 
 Rust support uses `syn` in-process for parsing, `prettyplease` for deterministic formatting, and `cargo check` for validation. Set `BONHOMME_CARGO` if `cargo` is not on `PATH`.
+
+Python support uses tree-sitter in-process for parsing and `python3 -m py_compile` for validation. Set `BONHOMME_PYTHON` or `[toolchain].python` if `python3` is not on `PATH`.
+
+C# support uses tree-sitter in-process for parsing and `dotnet build` for validation. Set `BONHOMME_DOTNET` or `[toolchain].dotnet` if `dotnet` is not on `PATH`.
 
 ## Demo walkthrough
 
@@ -89,6 +122,12 @@ bonhomme init --name bonhomme-demo
 bonhomme import --repo imported-ts --path examples/typescript-basic --reset
 bonhomme import --repo imported-go --path examples/go-basic --reset
 bonhomme import --repo imported-rust --path examples/rust-basic --reset
+bonhomme import --repo imported-python --path examples/python-basic --reset
+bonhomme import --repo imported-csharp --path examples/csharp-basic --reset
+bonhomme explore --repo imported-ts --branch main --open
+bonhomme session start --repo bonhomme-session --path examples/typescript-basic --reset --no-validate
+bonhomme session review --repo bonhomme-session --open
+bonhomme session land --repo bonhomme-session --out rendered-session
 bonhomme branch create --repo bonhomme-demo --name agent-a --base main
 bonhomme demo spawn --count 32
 bonhomme demo merge-all
@@ -105,6 +144,8 @@ bonhomme query find-callees --repo imported-rust --branch main --name summary
 ```
 
 `bonhomme simulate` resets the TypeScript demo repository, creates deterministic agent branches, merges them in a stable shuffled order, validates replay/render determinism, and runs `tsc` on the final rendered TypeScript. `bonhomme simulate --language go` runs the same merge-engine stress path against a Go `OrderService` and validates with `go build`; `bonhomme simulate --language rust` does the same for a Rust `OrderService` and validates with `cargo check`.
+
+`bonhomme session start` imports a working tree into `.bonhomme/session.db` and records the active repo, branch, and base operation position in `.bonhomme/session.json`. `bonhomme session land` writes only files touched after that base position. In-place land is gated by `[git].write_back = true` in `bonhomme.toml`; `--out` is always allowed.
 
 `bonhomme slice create` persists slice provenance: the branch, operation position, and root symbols used to render the editable projection. The returned slice is clean TypeScript without `bonhomme:symbol` or `bonhomme:file` identity comments. `bonhomme slice apply --slice-id` uses the stored base graph to recover semantic operations from the edited slice. The older `--original/--modified` apply path is still available as a legacy two-file diff.
 
