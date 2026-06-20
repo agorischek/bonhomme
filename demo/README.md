@@ -2,6 +2,9 @@
 
 React/Vite dashboard for the local bonhomme Rust API.
 
+This app is the rich development demo for simulations. The lightweight repo-scoped explorer ships
+in the core CLI as `bonhomme explore`.
+
 Start the API from the repository root:
 
 ```sh

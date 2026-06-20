@@ -23,9 +23,14 @@ struct AppState {
     storage: Storage,
 }
 
-pub async fn serve(database_url: Option<String>, addr: SocketAddr) -> Result<()> {
+pub async fn serve(
+    database_url: Option<String>,
+    config: &crate::config::Config,
+    addr: SocketAddr,
+) -> Result<()> {
     let database_url = database_url.unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string());
-    let storage = Storage::connect(&database_url, crate::plugins::language_registry()).await?;
+    let storage =
+        Storage::connect(&database_url, crate::plugins::language_registry(config)).await?;
     storage.migrate().await?;
 
     let app = router(storage);
