@@ -307,7 +307,7 @@ The prototype does not yet prove that bonhomme can faithfully model all TypeScri
 
 Important missing pieces include:
 
-- A full TypeScript AST and type-checker-backed plugin
+- Type-checker-backed TypeScript semantics beyond the current Oxc AST importer
 - Complete import fidelity for arbitrary TypeScript projects
 - Semantic diff for class edits, interfaces, enums, namespaces, decorators, and complex reference changes
 - File delete handling

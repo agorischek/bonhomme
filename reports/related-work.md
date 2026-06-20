@@ -60,8 +60,8 @@ Where they differ:
 - **Unison is its own language.** Its model works because the language was
   co-designed with the content-addressed store. bonhomme instead tries to wrap an
   *existing* language (TypeScript) behind a `LanguagePlugin`, which is far messier
-  — bonhomme's regex importer is the price of meeting TypeScript where it already
-  lives, whereas Unison never has to parse someone else's syntax.
+  — bonhomme now uses Oxc to parse TypeScript syntax, but still has to translate
+  someone else's language into its own intentionally smaller semantic model.
 - **Identity source.** Unison identity *is* the content hash, so two structurally
   identical definitions are literally the same object. bonhomme assigns explicit
   symbol UUIDs, so two methods with identical bodies remain distinct identities.
@@ -232,8 +232,9 @@ clean precedent in the same package:
 - **Soundness.** Pijul has a real theory of merge. bonhomme has a heuristic
   classifier plus a replay-and-`tsc` safety net — pragmatic, not proven.
 - **Language fidelity.** Unison and the AST-based mergers work on real parse
-  trees. bonhomme's importer is regex-based and covers a conservative TypeScript
-  subset; full-language fidelity is explicitly unfinished.
+  trees. bonhomme now imports and diffs TypeScript syntax through Oxc ASTs, but
+  its semantic model still covers a conservative TypeScript subset; full-language
+  and type-checker-backed fidelity is explicitly unfinished.
 - **Maturity and scale.** Git, Datomic, Kythe/Glean, and Plastic SCM are
   production systems handling enormous repositories. bonhomme is a prototype whose
   largest exercise is an in-memory multi-agent simulation.

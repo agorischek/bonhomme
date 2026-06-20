@@ -1,0 +1,28 @@
+name: Considered
+
+on:
+    push:
+        branches:
+            - main
+    workflow_dispatch:
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Install considered
+              env:
+                  CONSIDERED_VERSION: v0.1.2
+              run: |
+                  url="https://github.com/agorischek/considered/releases/download/${CONSIDERED_VERSION}"
+                  archive="considered_${CONSIDERED_VERSION}_linux_amd64.tar.gz"
+                  curl -fsSL "$url/$archive" -o "$RUNNER_TEMP/considered.tar.gz"
+                  tar -xzf "$RUNNER_TEMP/considered.tar.gz" -C "$RUNNER_TEMP"
+                  echo "$RUNNER_TEMP/considered_${CONSIDERED_VERSION}_linux_amd64" >> "$GITHUB_PATH"
+
+            - name: Check repository policy
+              run: considered check

@@ -1,0 +1,32 @@
+kinds:
+    - architectural
+    - permanent
+    - performance
+    - compatibility
+
+exclude:
+    gitignored: true
+    categories:
+        - assets
+        - configuration
+        - documentation
+        - generated
+        - tests
+        - vendored
+        - dependencies
+
+standards:
+    filesystem.bytes:
+        max: 50000
+    filesystem.longest_line:
+        max: 140
+    scc.code_lines:
+        max: 500
+    scc.complexity:
+        max: 50
+
+warnings:
+    percentBelowMax: 10
+    percentAboveMin: 10
+
+variances: {}

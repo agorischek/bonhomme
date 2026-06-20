@@ -1,4 +1,3 @@
-use crate::scanner::matching_brace;
 use crate::{diff_slice, import_typescript_files, render_files, validate_typescript_files};
 use bonhomme_core::{
     Operation, OperationRecord, RenderedFile, SemanticGraph, materialize, metadata_string,
@@ -325,18 +324,6 @@ export class Store extends Base<{ id: number }> {
         metadata_string(&store.metadata, "declaration")
             .unwrap()
             .contains("extends Base<{ id: number }>")
-    );
-}
-
-#[test]
-fn matching_brace_handles_nested_template_literals() {
-    let source = "{ return `a ${ok ? `X` : `Y`} b`; }";
-    assert_eq!(matching_brace(source.as_bytes(), 0), Some(source.len() - 1));
-
-    let object_in_interp = "{ return `${ {nested: 1} }`; }";
-    assert_eq!(
-        matching_brace(object_in_interp.as_bytes(), 0),
-        Some(object_in_interp.len() - 1)
     );
 }
 

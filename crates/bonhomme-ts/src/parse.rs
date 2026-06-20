@@ -1,7 +1,10 @@
-use crate::scanner::matching_brace;
-use anyhow::{Context, Result};
+use crate::oxc_parse::{
+    body_text, class_declaration_before_body, declaration_before_body, find_file_symbol_id,
+    find_symbol_id, strip_symbol_comments, with_program,
+};
+use anyhow::Result;
 use bonhomme_core::RenderedFile;
-use regex::Regex;
+use oxc_ast::ast::{Class, ClassElement, Declaration, Function, MethodDefinition, Statement};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -72,173 +75,137 @@ pub(crate) fn parse_files(files: &[RenderedFile]) -> Result<BTreeMap<String, Par
 }
 
 pub fn parse_file(file: &RenderedFile) -> Result<ParsedFile> {
-    let file_id_re = Regex::new(r"bonhomme:file=([0-9a-fA-F-]{36})")?;
-    let class_re = Regex::new(
-        r"class\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:/\*\s*bonhomme:symbol=([0-9a-fA-F-]{36})\s*\*/)?\s*\{",
-    )?;
-    let method_re = Regex::new(concat!(
-        r"^\s*((?:public|private|protected|async|static)\s+)*",
-        r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*",
-        r"\((?:[^()]|\([^()]*\))*\)\s*(?::\s*[^/{]+)?\s*",
-        r"(?:/\*\s*bonhomme:symbol=(?P<id>[0-9a-fA-F-]{36})\s*\*/)?\s*\{",
-    ))?;
-    let function_re = Regex::new(concat!(
-        r"(?m)^\s*(?P<signature>(?:export\s+)?(?:async\s+)?function\s+",
-        r"(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*",
-        r"\((?:[^()]|\([^()]*\))*\)\s*(?::\s*[^/{]+)?)",
-        r"(?:\s*/\*\s*bonhomme:symbol=(?P<id>[0-9a-fA-F-]{36})\s*\*/)?\s*\{",
-    ))?;
-
-    let file_symbol_id = file_id_re
-        .captures(&file.content)
-        .and_then(|captures| captures.get(1))
-        .and_then(|capture| Uuid::parse_str(capture.as_str()).ok());
-
     let mut classes = Vec::new();
-    let bytes = file.content.as_bytes();
-    let mut offset = 0;
-    let mut class_ranges = Vec::new();
+    let mut functions = Vec::new();
 
-    while let Some(captures) = class_re.captures(&file.content[offset..]) {
-        let whole = captures.get(0).expect("class regex has full match");
-        let name = captures
-            .get(1)
-            .expect("class regex captures name")
-            .as_str()
-            .to_string();
-        let symbol_id = captures
-            .get(2)
-            .and_then(|capture| Uuid::parse_str(capture.as_str()).ok());
-        let open_brace = offset + whole.end() - 1;
-        let close_brace = matching_brace(bytes, open_brace)
-            .with_context(|| format!("class {name} has no matching closing brace"))?;
-        let body = &file.content[open_brace + 1..close_brace];
-        let methods = parse_methods(body, symbol_id, &method_re)?;
-        class_ranges.push((offset + whole.start(), close_brace + 1));
-
-        classes.push(ParsedClass {
-            symbol_id,
-            name,
-            methods,
-        });
-
-        offset = close_brace + 1;
-    }
+    with_program(&file.path, &file.content, |program| {
+        for statement in &program.body {
+            parse_top_level_statement(file, statement, &mut classes, &mut functions);
+        }
+        Ok(())
+    })?;
 
     Ok(ParsedFile {
         path: file.path.clone(),
-        file_symbol_id,
+        file_symbol_id: find_file_symbol_id(&file.content),
         classes,
-        functions: parse_top_level_functions(&file.content, &class_ranges, &function_re)?,
+        functions,
     })
 }
 
-fn parse_top_level_functions(
-    content: &str,
-    class_ranges: &[(usize, usize)],
-    function_re: &Regex,
-) -> Result<Vec<ParsedFunction>> {
-    let mut functions = Vec::new();
-    let bytes = content.as_bytes();
-
-    for captures in function_re.captures_iter(content) {
-        let whole = captures.get(0).expect("function regex has full match");
-        if class_ranges
-            .iter()
-            .any(|(start, end)| whole.start() >= *start && whole.start() < *end)
-        {
-            continue;
+fn parse_top_level_statement(
+    file: &RenderedFile,
+    statement: &Statement<'_>,
+    classes: &mut Vec<ParsedClass>,
+    functions: &mut Vec<ParsedFunction>,
+) {
+    match statement {
+        Statement::ClassDeclaration(class) => {
+            push_class(file, class, class.span.start as usize, classes)
         }
-
-        let open_brace = whole.end() - 1;
-        let close_brace = matching_brace(bytes, open_brace)
-            .with_context(|| format!("function at byte {} has no closing brace", whole.start()))?;
-        let name = captures
-            .name("name")
-            .expect("function regex captures name")
-            .as_str()
-            .to_string();
-        let signature = captures
-            .name("signature")
-            .expect("function regex captures signature")
-            .as_str()
-            .trim()
-            .to_string();
-        let symbol_id = captures
-            .name("id")
-            .and_then(|capture| Uuid::parse_str(capture.as_str()).ok());
-        let body = content[open_brace + 1..close_brace]
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        functions.push(ParsedFunction {
-            symbol_id,
-            name,
-            signature,
-            body,
-        });
+        Statement::FunctionDeclaration(function) => {
+            push_function(file, function, function.span.start as usize, functions)
+        }
+        Statement::ExportNamedDeclaration(export) => {
+            let Some(declaration) = &export.declaration else {
+                return;
+            };
+            match declaration {
+                Declaration::ClassDeclaration(class) => {
+                    push_class(file, class, export.span.start as usize, classes);
+                }
+                Declaration::FunctionDeclaration(function) => {
+                    push_function(file, function, export.span.start as usize, functions);
+                }
+                _ => {}
+            }
+        }
+        Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+            oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
+                push_class(file, class, export.span.start as usize, classes);
+            }
+            oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                push_function(file, function, export.span.start as usize, functions);
+            }
+            _ => {}
+        },
+        _ => {}
     }
+}
 
-    Ok(functions)
+fn push_class(
+    file: &RenderedFile,
+    class: &Class<'_>,
+    declaration_start: usize,
+    classes: &mut Vec<ParsedClass>,
+) {
+    let Some(name) = class.id.as_ref().map(|id| id.name.to_string()) else {
+        return;
+    };
+    let declaration =
+        class_declaration_before_body(&file.content, declaration_start, class.body.span);
+    let symbol_id = find_symbol_id(&declaration);
+    classes.push(ParsedClass {
+        symbol_id,
+        name,
+        methods: parse_methods(file, class, symbol_id),
+    });
+}
+
+fn push_function(
+    file: &RenderedFile,
+    function: &Function<'_>,
+    declaration_start: usize,
+    functions: &mut Vec<ParsedFunction>,
+) {
+    let Some(body) = function.body.as_ref() else {
+        return;
+    };
+    let Some(name) = function.id.as_ref().map(|id| id.name.to_string()) else {
+        return;
+    };
+    let raw_signature = declaration_before_body(&file.content, declaration_start, body);
+    functions.push(ParsedFunction {
+        symbol_id: find_symbol_id(&raw_signature),
+        name,
+        signature: strip_symbol_comments(&raw_signature),
+        body: body_text(&file.content, body),
+    });
 }
 
 fn parse_methods(
-    class_body: &str,
+    file: &RenderedFile,
+    class: &Class<'_>,
     parent_class_id: Option<Uuid>,
-    method_re: &Regex,
-) -> Result<Vec<ParsedMethod>> {
-    let mut methods = Vec::new();
-    let mut body_offset = 0;
-    let bytes = class_body.as_bytes();
+) -> Vec<ParsedMethod> {
+    class
+        .body
+        .body
+        .iter()
+        .filter_map(|element| match element {
+            ClassElement::MethodDefinition(method) => parse_method(file, method, parent_class_id),
+            _ => None,
+        })
+        .collect()
+}
 
-    while let Some(captures) = method_re.captures(&class_body[body_offset..]) {
-        let whole = captures.get(0).expect("method regex has full match");
-        let absolute_start = body_offset + whole.start();
-        let absolute_end = body_offset + whole.end();
-        let open_brace = absolute_end - 1;
-        let close_brace = matching_brace(bytes, open_brace)
-            .with_context(|| format!("method at byte {absolute_start} has no closing brace"))?;
-        let signature = class_body[absolute_start..open_brace]
-            .replace("/*", "")
-            .replace("*/", "")
-            .replace(
-                captures
-                    .name("id")
-                    .map(|id| format!(" bonhomme:symbol={}", id.as_str()))
-                    .unwrap_or_default()
-                    .as_str(),
-                "",
-            )
-            .trim()
-            .to_string();
-        let name = captures
-            .name("name")
-            .expect("method regex captures name")
-            .as_str()
-            .to_string();
-        let symbol_id = captures
-            .name("id")
-            .and_then(|capture| Uuid::parse_str(capture.as_str()).ok());
-        let body = class_body[open_brace + 1..close_brace]
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        methods.push(ParsedMethod {
-            symbol_id,
-            parent_class_id,
-            name,
-            signature,
-            body,
-        });
-
-        body_offset = close_brace + 1;
-    }
-
-    Ok(methods)
+fn parse_method(
+    file: &RenderedFile,
+    method: &MethodDefinition<'_>,
+    parent_class_id: Option<Uuid>,
+) -> Option<ParsedMethod> {
+    let body = method.value.body.as_ref()?;
+    let name = match &method.key {
+        oxc_ast::ast::PropertyKey::StaticIdentifier(identifier) => identifier.name.to_string(),
+        oxc_ast::ast::PropertyKey::StringLiteral(literal) => literal.value.to_string(),
+        _ => return None,
+    };
+    let raw_signature = declaration_before_body(&file.content, method.span.start as usize, body);
+    Some(ParsedMethod {
+        symbol_id: find_symbol_id(&raw_signature),
+        parent_class_id,
+        name,
+        signature: strip_symbol_comments(&raw_signature),
+        body: body_text(&file.content, body),
+    })
 }
