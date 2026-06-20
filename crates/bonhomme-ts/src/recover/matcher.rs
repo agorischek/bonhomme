@@ -63,7 +63,12 @@ pub(super) struct MatchPlan {
     pub(super) deleted: Vec<usize>,
 }
 
-pub(super) fn match_container<B, E>(base: &[B], edited: &[E], kind: &str) -> Result<MatchPlan>
+pub(super) fn match_container<B, E>(
+    base: &[B],
+    edited: &[E],
+    kind: &str,
+    container: &str,
+) -> Result<MatchPlan>
 where
     B: SymbolLike,
     E: EditedLike,
@@ -83,6 +88,7 @@ where
         base,
         edited,
         kind,
+        container,
         &mut consumed_base,
         &mut consumed_edited,
         &mut matched,
@@ -121,6 +127,7 @@ fn match_by_similarity<B, E>(
     base: &[B],
     edited: &[E],
     kind: &str,
+    container: &str,
     consumed_base: &mut BTreeSet<usize>,
     consumed_edited: &mut BTreeSet<usize>,
     matched: &mut Vec<(usize, usize)>,
@@ -159,10 +166,13 @@ where
     }
 
     if !unmatched_base.is_empty() && !unmatched_edited.is_empty() {
+        let existing = base_symbol_names(base, &unmatched_base);
+        let incoming = edited_symbol_names(edited, &unmatched_edited);
         bail!(
-            "ambiguous structural {kind} identity recovery: {} existing and {} edited symbols remain unmatched",
-            unmatched_base.len(),
-            unmatched_edited.len()
+            "ambiguous structural {kind} identity recovery in {container}; \
+             refusing to guess between existing [{}] and edited [{}]",
+            existing.join(", "),
+            incoming.join(", ")
         );
     }
     Ok(())
@@ -241,4 +251,24 @@ fn normalized_tokens(value: &str) -> BTreeSet<String> {
 
 fn unconsumed_indexes(len: usize, consumed: &BTreeSet<usize>) -> Vec<usize> {
     (0..len).filter(|index| !consumed.contains(index)).collect()
+}
+
+fn base_symbol_names<T>(symbols: &[T], indexes: &[usize]) -> Vec<String>
+where
+    T: SymbolLike,
+{
+    indexes
+        .iter()
+        .map(|index| symbols[*index].name().to_string())
+        .collect()
+}
+
+fn edited_symbol_names<T>(symbols: &[T], indexes: &[usize]) -> Vec<String>
+where
+    T: EditedLike,
+{
+    indexes
+        .iter()
+        .map(|index| symbols[*index].name().to_string())
+        .collect()
 }

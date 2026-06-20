@@ -1,3 +1,4 @@
+use crate::import::calls::{CallTarget, collect_function_calls};
 use crate::oxc_parse::{
     body_text, class_declaration_before_body, declaration_before_body, find_file_symbol_id,
     find_symbol_id, strip_symbol_comments, with_program,
@@ -17,6 +18,8 @@ pub struct ParsedMethod {
     pub name: String,
     pub signature: String,
     pub body: String,
+    #[serde(skip)]
+    pub(crate) calls: Vec<CallTarget>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +37,8 @@ pub struct ParsedFunction {
     pub name: String,
     pub signature: String,
     pub body: String,
+    #[serde(skip)]
+    pub(crate) calls: Vec<CallTarget>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -170,6 +175,7 @@ fn push_function(
         name,
         signature: strip_symbol_comments(&raw_signature),
         body: body_text(&file.content, body),
+        calls: collect_function_calls(function),
     });
 }
 
@@ -207,5 +213,6 @@ fn parse_method(
         name,
         signature: strip_symbol_comments(&raw_signature),
         body: body_text(&file.content, body),
+        calls: collect_function_calls(&method.value),
     })
 }

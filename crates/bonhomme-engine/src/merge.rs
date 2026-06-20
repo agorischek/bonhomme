@@ -1,9 +1,55 @@
 use crate::{MergeResult, Storage};
 use anyhow::{Result, bail};
-use bonhomme_core::{MergeConflict, MergeOutcome, analyze_merge, materialize};
+use bonhomme_core::{
+    MergeAnalysis, MergeConflict, MergeOutcome, Operation, OperationRecord, analyze_merge,
+    materialize,
+};
+use chrono::Utc;
 use uuid::Uuid;
 
 impl Storage {
+    pub async fn analyze_operations_against_branch(
+        &self,
+        branch_id: Uuid,
+        base_position: i64,
+        operations: &[Operation],
+    ) -> Result<MergeAnalysis> {
+        let branch = self.branch_by_id(branch_id).await?;
+        let base_operations = self
+            .collect_branch_operations(branch_id, Some(base_position))
+            .await?;
+        if base_operations.len() as i64 != base_position {
+            bail!(
+                "branch {} has {} visible operations, not {}",
+                branch.name,
+                base_operations.len(),
+                base_position
+            );
+        }
+
+        let current_operations = self.collect_branch_operations(branch_id, None).await?;
+        let target_since_base = current_operations
+            .iter()
+            .skip(base_operations.len())
+            .cloned()
+            .collect::<Vec<_>>();
+        let source_operations =
+            synthetic_operation_records(branch.repository_id, branch_id, operations);
+        let mut analysis = analyze_merge(&target_since_base, &source_operations);
+
+        if analysis.outcome == MergeOutcome::SafeMerge {
+            validate_operation_application(
+                self,
+                &current_operations,
+                &source_operations,
+                &mut analysis,
+            )
+            .await?;
+        }
+
+        Ok(analysis)
+    }
+
     pub async fn merge_branch(
         &self,
         repository_name: &str,
@@ -37,36 +83,13 @@ impl Storage {
 
         let mut analysis = analyze_merge(&target_since_base, &source_operations);
         if analysis.outcome == MergeOutcome::SafeMerge {
-            let mut target_graph = materialize(&target_operations)?;
-            for operation in &source_operations {
-                if let Err(error) = target_graph.apply_record(operation) {
-                    analysis.outcome = MergeOutcome::Conflict;
-                    analysis.conflicts.push(MergeConflict {
-                        reason: "VALIDATION_REJECTED".to_string(),
-                        source_operation_id: operation.id,
-                        target_operation_id: None,
-                        symbol_id: operation.operation.created_symbol_id(),
-                        detail: error.to_string(),
-                    });
-                    break;
-                }
-            }
-            if analysis.outcome == MergeOutcome::SafeMerge {
-                let files = self.plugin.render(&target_graph);
-                if let Err(error) = self.plugin.validate(&files).await {
-                    analysis.outcome = MergeOutcome::Conflict;
-                    analysis.conflicts.push(MergeConflict {
-                        reason: "TSC_REJECTED".to_string(),
-                        source_operation_id: source_operations
-                            .first()
-                            .map(|operation| operation.id)
-                            .unwrap_or_else(Uuid::nil),
-                        target_operation_id: None,
-                        symbol_id: None,
-                        detail: error.to_string(),
-                    });
-                }
-            }
+            validate_operation_application(
+                self,
+                &target_operations,
+                &source_operations,
+                &mut analysis,
+            )
+            .await?;
         }
 
         if analysis.outcome == MergeOutcome::Conflict {
@@ -123,4 +146,62 @@ impl Storage {
             files: self.plugin.render(&graph),
         })
     }
+}
+
+fn synthetic_operation_records(
+    repository_id: Uuid,
+    branch_id: Uuid,
+    operations: &[Operation],
+) -> Vec<OperationRecord> {
+    operations
+        .iter()
+        .enumerate()
+        .map(|(index, operation)| OperationRecord {
+            id: Uuid::new_v4(),
+            repository_id,
+            branch_id,
+            changeset_id: Uuid::nil(),
+            position: index as i64 + 1,
+            operation: operation.clone(),
+            created_at: Utc::now(),
+        })
+        .collect()
+}
+
+async fn validate_operation_application(
+    storage: &Storage,
+    current_operations: &[OperationRecord],
+    source_operations: &[OperationRecord],
+    analysis: &mut MergeAnalysis,
+) -> Result<()> {
+    let mut graph = materialize(current_operations)?;
+    for operation in source_operations {
+        if let Err(error) = graph.apply_record(operation) {
+            analysis.outcome = MergeOutcome::Conflict;
+            analysis.conflicts.push(MergeConflict {
+                reason: "VALIDATION_REJECTED".to_string(),
+                source_operation_id: operation.id,
+                target_operation_id: None,
+                symbol_id: operation.operation.created_symbol_id(),
+                detail: error.to_string(),
+            });
+            return Ok(());
+        }
+    }
+
+    let files = storage.plugin.render(&graph);
+    if let Err(error) = storage.plugin.validate(&files).await {
+        analysis.outcome = MergeOutcome::Conflict;
+        analysis.conflicts.push(MergeConflict {
+            reason: "COMPILER_REJECTED".to_string(),
+            source_operation_id: source_operations
+                .first()
+                .map(|operation| operation.id)
+                .unwrap_or_else(Uuid::nil),
+            target_operation_id: None,
+            symbol_id: None,
+            detail: error.to_string(),
+        });
+    }
+    Ok(())
 }

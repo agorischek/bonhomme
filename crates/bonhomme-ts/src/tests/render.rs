@@ -5,13 +5,15 @@ use serde_json::json;
 use uuid::Uuid;
 
 #[test]
-fn files_are_deterministic_with_identity_comments() {
+fn files_are_deterministic_without_identity_comments() {
     let graph = order_service_graph();
     let first = render_files(&graph);
     let second = render_files(&graph);
 
     assert_eq!(first, second);
-    assert!(first[0].content.contains("bonhomme:symbol="));
+    assert!(first[0].content.contains("class OrderService"));
+    assert!(!first[0].content.contains("bonhomme:file="));
+    assert!(!first[0].content.contains("bonhomme:symbol="));
 }
 
 #[test]

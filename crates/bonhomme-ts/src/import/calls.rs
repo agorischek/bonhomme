@@ -7,12 +7,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum CallTarget {
+pub(crate) enum CallTarget {
     Free(String),
     This(String),
 }
 
-pub(super) type CallsBySymbol = BTreeMap<Uuid, Vec<CallTarget>>;
+pub(crate) type CallsBySymbol = BTreeMap<Uuid, Vec<CallTarget>>;
 
 struct ImportedSymbol {
     id: Uuid,
@@ -85,10 +85,7 @@ pub(super) fn import_references(indexes: &ImportIndexes) -> Vec<Operation> {
                 continue;
             }
             operations.push(Operation::CreateReference {
-                reference_id: stable_import_uuid(&format!(
-                    "reference:{}:{}:calls",
-                    symbol.id, target_id
-                )),
+                reference_id: stable_reference_uuid(symbol.id, target_id, "calls"),
                 from_symbol_id: symbol.id,
                 to_symbol_id: target_id,
                 kind: "calls".to_string(),
@@ -99,7 +96,11 @@ pub(super) fn import_references(indexes: &ImportIndexes) -> Vec<Operation> {
     operations
 }
 
-pub(super) fn collect_function_calls(function: &Function<'_>) -> Vec<CallTarget> {
+pub(crate) fn stable_reference_uuid(from_symbol_id: Uuid, to_symbol_id: Uuid, kind: &str) -> Uuid {
+    stable_import_uuid(&format!("reference:{from_symbol_id}:{to_symbol_id}:{kind}"))
+}
+
+pub(crate) fn collect_function_calls(function: &Function<'_>) -> Vec<CallTarget> {
     let mut calls = Vec::new();
     if let Some(body) = &function.body {
         for statement in &body.statements {

@@ -2,6 +2,7 @@ import { ChevronRightIcon } from '@primer/octicons-react'
 import { Label } from '@primer/react'
 import { Fragment, useState } from 'react'
 import type { DemoState, SymbolNode } from '../../types'
+import { CodeBlock } from '../CodeBlock'
 import { fileForSymbol, metaBool, metaString, pathOf, relatedSymbols } from './graph'
 import { KindIcon } from './KindIcon'
 
@@ -115,10 +116,10 @@ export function SymbolDetail({ state, symbol }: { state: DemoState; symbol: Symb
       ) : rendered ? (
         <>
           <div className="bh-code-path">{rendered.path}</div>
-          <pre className="bh-code">{rendered.content}</pre>
+          <CodeBlock className="bh-code" code={rendered.content} path={rendered.path} />
         </>
       ) : symbol.body ? (
-        <pre className="bh-code">{symbol.body}</pre>
+        <CodeBlock className="bh-code" code={symbol.body} path={filePath} />
       ) : (
         <div className="bh-muted">No rendered projection for this symbol.</div>
       )}

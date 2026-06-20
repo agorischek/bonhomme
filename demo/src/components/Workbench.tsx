@@ -1,4 +1,5 @@
 import { Code2, Network } from 'lucide-react'
+import { CodeBlock } from './CodeBlock'
 import { SectionHeader } from './SectionHeader'
 import type { RenderedFile, SemanticGraph, SymbolNode } from '../types'
 
@@ -61,7 +62,11 @@ export function Workbench({
           title={selectedFile?.path ?? 'Rendered TypeScript'}
           detail={revisionLabel}
         />
-        <pre className="code-pane">{selectedFile?.content ?? 'Waiting for bonhomme API...'}</pre>
+        <CodeBlock
+          className="code-pane"
+          code={selectedFile?.content ?? 'Waiting for bonhomme API...'}
+          path={selectedFile?.path}
+        />
       </div>
     </section>
   )

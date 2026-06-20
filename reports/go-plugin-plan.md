@@ -1,9 +1,10 @@
 # Plan: A Go Language Plugin
 
-**Status:** proposed. Should land *after* the `LanguagePlugin` trait settles into
-its structural-identity shape (see
-[structural-identity-plan.md](structural-identity-plan.md)) so Go is built greenfield
-against the final interface, with no comment-identity legacy.
+**Status:** implemented as an end-to-end prototype. The implementation landed after
+the structural-identity work and uses the per-file handler router from
+[fallback-handlers-plan.md](fallback-handlers-plan.md), not the older per-repository
+language column described in the first version of this plan. Go is registered as a
+handler alongside TypeScript and the blob fallback, with no comment-identity legacy.
 **Companion reading:** [related-work.md](related-work.md) (why Go over Python/Rust/Java),
 [core-premise.md](core-premise.md).
 
@@ -25,9 +26,9 @@ Go forces three things to be real rather than aspirational:
    `func (s *Server) Start()` is textually top-level but semantically a child of
    `Server`. The graph parent ≠ where the text sits. This is the sharpest test of
    "the graph is the truth; text is a projection."
-3. **Multi-plugin support in the engine** — today `Storage` holds exactly one
-   `Arc<dyn LanguagePlugin>`. A second language is what forces per-repository plugin
-   selection to exist.
+3. **Multi-plugin support in the engine** — `Storage` still holds one
+   `Arc<dyn LanguagePlugin>`, but that plugin is now a per-file `HandlerRegistry`
+   containing TypeScript, Go, and blob fallback handlers.
 
 ## What Go tests that TS can't
 
@@ -38,7 +39,7 @@ Go forces three things to be real rather than aspirational:
 | Parser strategy | in-process (oxc) | language-toolchain subprocess (Go's own `go/parser` + `go/types`) |
 | Formatting/determinism | bespoke renderer | canonical `gofmt` — determinism for free, output is idiomatic |
 | Validator strength | `tsc` (good) | `go build` (fast + strict) |
-| Engine plugin selection | one hard-wired plugin | a registry keyed by repository language |
+| Engine plugin selection | one hard-wired plugin | a per-file handler registry |
 
 ## Architecture
 
@@ -101,20 +102,20 @@ TS-kind assumption** (duplicate-sibling uses `(parent, kind, name)`, which is
 vocabulary-agnostic; confirm nothing else sneaks one in). If something breaks, the
 abstraction was incomplete and we found it with language #2, not #5.
 
-## Multi-plugin selection (the real engine change)
+## Multi-plugin selection (implemented as per-file routing)
 
-Today `Storage { plugin: Arc<dyn LanguagePlugin> }` assumes one language. Generalize:
+The first draft proposed a repository-level language registry. The implemented
+version follows the fallback-handler plan instead:
 
-- Add a `LanguageRegistry` (a `BTreeMap<String, Arc<dyn LanguagePlugin>>`) and a
-  `repositories.language` column (default `"typescript"`).
-- `Storage` holds the registry; every render/import/diff/validate resolves the
-  plugin by the repository's `language`. Helper: `Storage::plugin_for(repo)`.
-- The composition root (api/cli) registers `{"typescript": TypeScriptPlugin,
-  "go": GoPlugin}`.
-- `init`/`import` take a `--language` flag that sets the repo's language.
+- `Storage` holds one `HandlerRegistry`.
+- The registry dispatches per file by handler claims.
+- Imported file symbols store a `handler` metadata tag (`typescript`, `go`, or
+  `blob`) so render/recover can route by provenance instead of guessing later.
+- The composition root registers TypeScript, Go, and blob fallback in priority
+  order.
 
-This is the single most consequential architectural addition; it is the honest
-proof that the `LanguagePlugin` seam is a real boundary and not a one-off.
+This is stronger than the original repo-level design because a real repository can
+contain `.ts`, `.go`, Markdown, JSON, and opaque files together.
 
 ## Render
 
@@ -153,20 +154,20 @@ rendering, `go build` validation. Out (deferred): generics, embedding,
 
 ## Phased delivery
 
-- **G0 — toolchain spike.** The Go helper: `parse` (source → JSON symbol model via
+- **G0 — toolchain spike.** Done. The Go helper: `parse` (source → JSON symbol model via
   `go/parser`+`go/types`) and `format` (gofmt). `toolchain.rs` invokes it; detect
-  `go` / honor `BONHOMME_GO`. No bonhomme integration yet.
-- **G1 — import + render round-trip.** Map JSON ↔ graph; render via gofmt; validate
+  `go` / honor `BONHOMME_GO`.
+- **G1 — import + render round-trip.** Done. Map JSON ↔ graph; render via gofmt; validate
   via `go build`. Prove import→render→`go build` on a fixture package. Crate exists,
-  not yet wired to the engine.
-- **G2 — multi-plugin engine.** `LanguageRegistry` + `repositories.language` +
-  `Storage::plugin_for`; `init/import --language go`. Audit core/engine for TS-kind
-  assumptions. TS behavior unchanged.
-- **G3 — identity recovery.** Implement `recover_operations` for Go (structural,
+  and is wired to the engine.
+- **G2 — multi-plugin engine.** Done as `HandlerRegistry` + per-file `handler`
+  metadata, superseding the repository-language column.
+- **G3 — identity recovery.** Done for the conservative v1 subset. Implement
+  `recover_operations` for Go (structural,
   comment-free), reusing the matcher patterns from the structural-identity work.
-- **G4 — references + queries.** `calls` edges from `go/types`; confirm
+- **G4 — references + queries.** Done. `calls` edges from `go/types`; confirm
   find-callers/callees/dependencies work cross-language.
-- **G5 — simulation + docs.** A Go variant of the multi-agent simulation (agents
+- **G5 — simulation + docs.** Done. A Go variant of the multi-agent simulation (agents
   add methods to a struct), update `docs/spec-coverage.md`, document the toolchain
   requirement.
 

@@ -8,6 +8,8 @@ repository.workspace = true
 [dependencies]
 bonhomme-core.workspace = true
 bonhomme-ts.workspace = true
+bonhomme-go.workspace = true
+bonhomme-fallback.workspace = true
 bonhomme-engine.workspace = true
 anyhow.workspace = true
 axum.workspace = true
@@ -20,3 +22,6 @@ tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true

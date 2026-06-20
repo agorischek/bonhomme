@@ -2,6 +2,8 @@
 members = [
     "crates/bonhomme-core",
     "crates/bonhomme-ts",
+    "crates/bonhomme-go",
+    "crates/bonhomme-fallback",
     "crates/bonhomme-engine",
     "crates/bonhomme",
 ]
@@ -16,6 +18,8 @@ repository = "https://github.com/agorischek/bonhomme"
 # Internal crates
 bonhomme-core = { path = "crates/bonhomme-core" }
 bonhomme-ts = { path = "crates/bonhomme-ts" }
+bonhomme-go = { path = "crates/bonhomme-go" }
+bonhomme-fallback = { path = "crates/bonhomme-fallback" }
 bonhomme-engine = { path = "crates/bonhomme-engine" }
 
 # External crates (features are enabled per-consumer by listing the dependency)
@@ -33,3 +37,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.18", features = ["serde", "v4", "v5"] }
 proptest = "1.9"
+pulldown-cmark = { version = "0.12", default-features = false }
+base64 = "0.22"
+tree-sitter = "0.24"
+tree-sitter-python = "0.23"
+tree-sitter-rust = "0.23"

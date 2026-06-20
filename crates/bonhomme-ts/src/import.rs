@@ -1,4 +1,4 @@
-mod calls;
+pub(crate) mod calls;
 
 use crate::oxc_parse::{
     body_text, class_declaration_before_body, declaration_before_body, outside_ranges, span_range,
@@ -59,6 +59,7 @@ pub fn import_typescript_files(files: &[RenderedFile]) -> Result<Vec<Operation>>
                 .to_string(),
             body: None,
             metadata: json!({
+                "handler": "typescript",
                 "path": file.path,
                 "preamble": outside_ranges(&file.content, &top_level_ranges)
             }),

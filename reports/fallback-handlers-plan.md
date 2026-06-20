@@ -1,8 +1,15 @@
 # Plan: Fallback Handlers (files without a full language plugin)
 
-**Status:** proposed. The router/blob foundation should land alongside the
-multi-plugin work the Go plan introduces (it supersedes that plan's per-repo
-language idea). Structured-data and tree-sitter tiers follow.
+**Status:** implemented (F0–F5). The per-file `HandlerRegistry` (itself a
+`LanguagePlugin`) lives in `bonhomme-core` next to the terminal `BlobHandler`; the
+structured (`JsonHandler`, `MarkdownHandler`, `TomlHandler`) and tree-sitter
+(`TreeSitterHandler`) tiers live in `bonhomme-fallback`; the composition root wires
+them in `crates/bonhomme/src/plugins.rs` (`typescript → go → json → markdown → toml
+→ yaml → treesitter → blob`). JSON/Markdown plus span-preserving TOML and YAML all
+ship; the merge engine was not touched. Remaining follow-ups: content-addressed
+storage for large binaries (inline base64 + a size cap ship now) and nested
+JSON-key decomposition (top-level keys ship now). Tier E (blob + line merge) remains
+declined by design.
 **Companion reading:** [go-plugin-plan.md](go-plugin-plan.md) (the registry this
 evolves), [structural-identity-plan.md](structural-identity-plan.md),
 [core-premise.md](core-premise.md).

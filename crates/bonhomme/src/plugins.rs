@@ -1,0 +1,129 @@
+use std::sync::Arc;
+
+use bonhomme_core::{BlobHandler, Handler, HandlerRegistry, LanguagePlugin};
+use bonhomme_fallback::{
+    JsonHandler, MarkdownHandler, TomlHandler, TreeSitterHandler, YamlHandler,
+};
+use bonhomme_go::GoPlugin;
+use bonhomme_ts::TypeScriptPlugin;
+
+/// Build the per-file handler router injected into [`bonhomme_engine::Storage`]. This is the one
+/// composition root for languages: the storage/merge engine holds a single `Arc<dyn LanguagePlugin>`
+/// (the registry) and never grows a "no plugin" branch.
+///
+/// Order is priority order — the most specific handlers claim first, and the blob handler is
+/// terminal, claiming everything as the universal floor. New language plugins slot in ahead of the
+/// blob handler.
+pub fn language_registry() -> Arc<dyn LanguagePlugin> {
+    Arc::new(handler_registry())
+}
+
+/// The concrete registry behind [`language_registry`]. Kept separate so tests can call
+/// [`HandlerRegistry`] methods (e.g. the handler breakdown) that the `dyn LanguagePlugin` view hides.
+fn handler_registry() -> HandlerRegistry {
+    HandlerRegistry::new(vec![
+        Arc::new(TypeScriptPlugin) as Arc<dyn Handler>,
+        Arc::new(GoPlugin),
+        Arc::new(JsonHandler),
+        Arc::new(MarkdownHandler),
+        Arc::new(TomlHandler),
+        Arc::new(YamlHandler),
+        // Tree-sitter is the broad structural-lite tier (Python, Rust, …); it claims grammar
+        // extensions with no full plugin and sits just above the terminal blob floor.
+        Arc::new(TreeSitterHandler),
+        Arc::new(BlobHandler),
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bonhomme_core::{
+        LanguagePlugin, Operation, OperationRecord, RenderedFile, SemanticGraph, decode_binary,
+        encode_binary, materialize,
+    };
+    use std::collections::BTreeMap;
+    use uuid::Uuid;
+
+    fn rf(path: &str, content: &str) -> RenderedFile {
+        RenderedFile {
+            path: path.to_string(),
+            content: content.to_string(),
+        }
+    }
+
+    fn graph_from(operations: &[Operation]) -> SemanticGraph {
+        let records = operations
+            .iter()
+            .enumerate()
+            .map(|(index, operation)| OperationRecord {
+                id: Uuid::new_v4(),
+                repository_id: Uuid::nil(),
+                branch_id: Uuid::nil(),
+                changeset_id: Uuid::nil(),
+                position: index as i64 + 1,
+                operation: operation.clone(),
+                created_at: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+            })
+            .collect::<Vec<_>>();
+        materialize(&records).expect("polyglot operations materialize into a valid graph")
+    }
+
+    #[test]
+    fn polyglot_repo_routes_renders_and_round_trips_every_tier() {
+        let registry = handler_registry();
+        let binary = encode_binary(&[0xFFu8, 0x00, 0x10, 0xAB]);
+        let files = vec![
+            rf(
+                "src/app.ts",
+                "export function f(): number {\n  return 1;\n}\n",
+            ),
+            rf("package.json", "{\"name\":\"demo\"}"),
+            rf("README.md", "# Title\n\nsome text\n"),
+            rf("Cargo.toml", "[package]\nname = \"demo\"\n"),
+            rf("util.py", "def greet():\n    return 1\n"),
+            rf("LICENSE", "MIT, verbatim.\n"),
+            rf("logo.png", &binary),
+        ];
+
+        let operations = registry.import(&files).expect("polyglot import succeeds");
+        let graph = graph_from(&operations);
+
+        // Each file routed to the right handler; LICENSE and the binary are the two opaque blobs.
+        let breakdown = registry.handler_breakdown(&graph);
+        assert_eq!(breakdown.get("typescript"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("json"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("markdown"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("toml"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("treesitter"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("blob"), Some(&2), "{breakdown:?}");
+
+        // Render the whole graph back through the router; span-preserving tiers are byte-identical
+        // and the binary decodes to its original bytes.
+        let rendered = registry.render(&graph);
+        let by_path: BTreeMap<&str, &str> = rendered
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_str()))
+            .collect();
+        assert_eq!(by_path["README.md"], "# Title\n\nsome text\n");
+        assert_eq!(by_path["Cargo.toml"], "[package]\nname = \"demo\"\n");
+        assert_eq!(by_path["util.py"], "def greet():\n    return 1\n");
+        assert_eq!(by_path["LICENSE"], "MIT, verbatim.\n");
+        assert_eq!(
+            decode_binary(by_path["logo.png"]).as_deref(),
+            Some(&[0xFFu8, 0x00, 0x10, 0xAB][..])
+        );
+    }
+
+    #[test]
+    fn unparseable_structured_file_degrades_to_blob() {
+        let registry = handler_registry();
+        // A `.json` extension but malformed contents: the JSON handler errors, and the router
+        // degrades just this file to the blob floor rather than failing the whole import.
+        let operations = registry
+            .import(&[rf("broken.json", "{ this is not json ")])
+            .expect("import degrades rather than failing");
+        let graph = graph_from(&operations);
+        assert_eq!(registry.handler_breakdown(&graph).get("blob"), Some(&1));
+    }
+}

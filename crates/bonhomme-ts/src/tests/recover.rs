@@ -129,6 +129,161 @@ export class OrderService {
 }
 
 #[test]
+fn updates_call_references_when_clean_method_body_changes() {
+    let mut operations = import_operations(
+        r#"
+export class OrderService {
+  displayName(): string {
+    return "OrderService";
+  }
+
+  listOrders(): string[] {
+    return ["one"];
+  }
+
+  summary(): string {
+    return this.displayName();
+  }
+}
+"#,
+    );
+    let graph = materialize_operations(operations.clone());
+    let display_name_id = graph.find_symbol("displayName")[0].id;
+    let list_orders_id = graph.find_symbol("listOrders")[0].id;
+    let summary_id = graph.find_symbol("summary")[0].id;
+    assert_eq!(
+        graph.find_callees(summary_id, "calls")[0].id,
+        display_name_id
+    );
+    let edited = vec![sample_file(
+        r#"
+export class OrderService {
+  displayName(): string {
+    return "OrderService";
+  }
+
+  listOrders(): string[] {
+    return ["one"];
+  }
+
+  summary(): string {
+    return this.listOrders().join(",");
+  }
+}
+"#,
+    )];
+
+    let recovered = recover_operations(&graph, &[summary_id], &edited).unwrap();
+
+    assert!(matches!(
+        recovered.as_slice(),
+        [
+            Operation::DeleteReference { .. },
+            Operation::UpdateSymbol { symbol_id, .. },
+            Operation::CreateReference {
+                from_symbol_id,
+                to_symbol_id,
+                kind,
+                ..
+            }
+        ] if *symbol_id == summary_id
+            && *from_symbol_id == summary_id
+            && *to_symbol_id == list_orders_id
+            && kind == "calls"
+    ));
+
+    operations.extend(recovered);
+    let updated = materialize_operations(operations);
+    let callees = updated.find_callees(summary_id, "calls");
+    assert_eq!(callees.len(), 1);
+    assert_eq!(callees[0].id, list_orders_id);
+}
+
+#[test]
+fn deletes_references_before_deleted_symbols() {
+    let mut operations = import_operations(
+        r#"
+export class OrderService {
+  displayName(): string {
+    return "OrderService";
+  }
+
+  summary(): string {
+    return this.displayName();
+  }
+}
+"#,
+    );
+    let graph = materialize_operations(operations.clone());
+    let summary_id = graph.find_symbol("summary")[0].id;
+    assert_eq!(graph.find_references(summary_id).len(), 1);
+    let edited = vec![sample_file(
+        r#"
+export class OrderService {
+  displayName(): string {
+    return "OrderService";
+  }
+}
+"#,
+    )];
+
+    let recovered = recover_operations(&graph, &[], &edited).unwrap();
+
+    assert!(matches!(
+        recovered.as_slice(),
+        [
+            Operation::DeleteReference { .. },
+            Operation::DeleteSymbol { symbol_id }
+        ] if *symbol_id == summary_id
+    ));
+
+    operations.extend(recovered);
+    let updated = materialize_operations(operations);
+    assert!(updated.find_symbol("summary").is_empty());
+}
+
+#[test]
+fn rejects_ambiguous_multi_method_identity_recovery() {
+    let graph = import_graph(
+        r#"
+export class OrderService {
+  alpha(): string {
+    return "north";
+  }
+
+  beta(): string {
+    return "south";
+  }
+}
+"#,
+    );
+    let class_id = graph.find_symbol("OrderService")[0].id;
+    let edited = vec![sample_file(
+        r#"
+export class OrderService {
+  gamma(): string {
+    return "warehouse";
+  }
+
+  delta(): string {
+    return "billing";
+  }
+}
+"#,
+    )];
+
+    let error = recover_operations(&graph, &[class_id], &edited)
+        .expect_err("ambiguous multi-rename recovery must reject")
+        .to_string();
+
+    assert!(error.contains("ambiguous structural method identity recovery"));
+    assert!(error.contains("class OrderService"));
+    assert!(error.contains("refusing to guess"));
+    assert!(error.contains("alpha") && error.contains("beta"));
+    assert!(error.contains("gamma") && error.contains("delta"));
+}
+
+#[test]
 fn matches_comment_diff_for_existing_slice_edits() {
     let graph = import_graph(
         r#"
@@ -139,7 +294,22 @@ export class OrderService {
 }
 "#,
     );
-    let original = render_files(&graph);
+    let file_id = graph.root_symbols()[0].id;
+    let class_id = graph.find_symbol("OrderService")[0].id;
+    let method_id = graph.find_symbol("displayName")[0].id;
+    let original = vec![RenderedFile {
+        path: "src/Sample.ts".to_string(),
+        content: format!(
+            r#"// bonhomme:file={file_id}
+
+export class OrderService /* bonhomme:symbol={class_id} */ {{
+  displayName(): string /* bonhomme:symbol={method_id} */ {{
+    return "OrderService";
+  }}
+}}
+"#
+        ),
+    }];
     let modified = vec![RenderedFile {
         path: original[0].path.clone(),
         content: original[0]

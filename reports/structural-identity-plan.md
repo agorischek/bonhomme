@@ -1,6 +1,7 @@
 # Plan: Structural Identity Recovery (drop in-text symbol comments)
 
-**Status:** in progress. P0-P3 are implemented; stale-base handling is next.
+**Status:** in progress. P0-P4, recovery audit attachments, and ambiguity
+rejection are implemented; reference cleanup is next.
 **Companion reading:** [core-premise.md](core-premise.md) (why files are projections),
 [related-work.md](related-work.md) (Unison / structured-merge lineage).
 
@@ -18,7 +19,7 @@ anchor only for the genuinely ambiguous cases, so the system never has to guess.
 
 Success looks like:
 
-- A rendered slice contains no `bonhomme:symbol=` / `bonhomme:file=` comments.
+- Rendered TypeScript contains no `bonhomme:symbol=` / `bonhomme:file=` comments.
 - `slice apply` recovers the correct `Create/Update/Delete` operations from clean
   edited text, identical to what the comment-based path produces today.
 - Identity survives renames, body rewrites, adds, and deletes within a slice's
@@ -41,8 +42,9 @@ annotation.
   `ParsedFile { file_symbol_id, classes: [ParsedClass{ symbol_id, name, methods }],
   functions }`. Identity is *still* read from comments via
   `oxc_parse::find_symbol_id` / `find_file_symbol_id`.
-- Full branch rendering still emits `bonhomme:symbol=` / `bonhomme:file=`
-  comments for the legacy two-file diff path. Stored slice rendering is clean.
+- Full branch rendering and stored slice rendering are both clean. The legacy
+  two-file diff path still consumes older comment-bearing text, but new render
+  output does not produce those anchors.
 - `diff_slice(original, modified)` is **stateless**: it parses two supplied text
   blobs and matches by id-then-name. The new `ensure_unique_symbol_ids` guard
   rejects a slice that reuses an id.
@@ -136,31 +138,31 @@ them through the same `analyze_merge` + replay + `tsc` path used for branch merg
 This is the one genuinely new concern statefulness introduces; it mirrors "your
 branch is behind" in git and the engine already has `base_position` semantics.
 
-## Hybrid anchor & ambiguity policy
+## Ambiguity Policy
 
 Pure structural matching is ambiguous only when **two or more symbols in the same
 container are simultaneously renamed *and* rewritten** (each looks like
-delete+add). Policy, in order:
+delete+add). Version 1 keeps edited TypeScript clean and rejects those cases
+instead of reintroducing in-text anchors.
+
+Policy, in order:
 
 1. Resolve with body-similarity if one pairing scores clearly highest.
-2. Else consult an **optional anchor**: a short, stable handle recorded in the
-   slice's provenance (a per-slice `{handle -> symbol_id}` map) that the agent
-   *may* preserve in a lightweight comment but is **not required** to. Used only as
-   a tie-breaker, never as the primary channel.
-3. Else **refuse to guess**: emit delete+create (identity lost but safe) *or*
-   reject the apply with a precise diagnostic naming the ambiguous symbols. Default
-   to rejection for destructive ambiguity; make it configurable.
+2. Else **refuse to guess** and reject the apply with a diagnostic naming the
+   container plus unmatched existing and edited symbols.
 
-This keeps the common case zero-token and the rare case deterministic — consistent
-with the premise's "do not guess" while not taxing every edit.
+This keeps the common case zero-token and the rare case deterministic. The system
+does not ask agents to preserve hidden anchors, and ambiguous identity becomes a
+reviewable conflict rather than silent misattribution.
 
 ## Safety nets (unchanged, still load-bearing)
 
 - Deterministic replay + `graph.validate()` reject structurally invalid results.
 - Re-render + `tsc` after apply: a mis-recovered identity that produces invalid TS
   fails loudly rather than silently corrupting (today's failure mode).
-- Record the matcher's decisions (matched/renamed/added/deleted, and why) as
-  changeset metadata so a reviewer can audit how text became operations.
+- Record the recovered operation decisions (added/updated/renamed/deleted, stale
+  status, appended operation IDs) as changeset metadata so a reviewer can audit
+  how text became operations. A deeper matcher trace can still be added later.
 
 ## Phased delivery
 
@@ -173,13 +175,15 @@ Each phase is independently shippable and keeps the suite green.
 - **P2 — provenance.** Implemented. Add the `slices` table + `slice create`/`slice apply
   --slice-id`; engine materializes the base graph and calls the matcher. Old
   `--original/--modified` path stays as legacy.
-- **P3 — clean render.** Implemented. Stop emitting `bonhomme:symbol=` / `bonhomme:file=`
-  comments from slice rendering; the matcher now relies purely on structure + base
-  snapshot. Keep the header banner (human guidance, not identity).
-- **P4 — stale-base handling.** Route recovered ops through the merge/rebase path
+- **P3 — clean render.** Implemented. Stop emitting `bonhomme:symbol=` /
+  `bonhomme:file=` comments from TypeScript rendering; the matcher now relies
+  purely on structure + base snapshot. Keep the header banner (human guidance,
+  not identity).
+- **P4 — stale-base handling.** Implemented. Route recovered ops through the merge/rebase path
   when `base_position` < current branch length.
-- **P5 — hybrid anchor + cleanup.** Add the optional anchor for ambiguous cases;
-  remove dead comment-identity code; update `docs/spec-coverage.md` and tests.
+- **P5 — ambiguity rejection + cleanup.** Implemented for ambiguous recovery
+  diagnostics. Remaining cleanup: expand matcher audit traces if needed, remove
+  dead comment-identity code where safe, update `docs/spec-coverage.md` and tests.
 
 ## Testing strategy
 
@@ -197,10 +201,11 @@ Each phase is independently shippable and keeps the suite green.
 
 ## What changes / what's removed
 
-- **Removed:** `bonhomme:symbol=` / `bonhomme:file=` from stored slice output;
-  the agent obligation to preserve UUIDs; `find_symbol_id` as the *primary*
-  identity source for stored slices. The legacy two-file diff still reads identity
-  comments, and the duplicate-id guard still protects that path.
+- **Removed:** `bonhomme:symbol=` / `bonhomme:file=` from TypeScript render and
+  stored slice output; the agent obligation to preserve UUIDs; `find_symbol_id`
+  as the *primary* identity source for stored slices. The legacy two-file diff
+  still reads older identity comments, and the duplicate-id guard still protects
+  that path.
 - **Added:** `recover_operations` (structural matcher); slice provenance
   persistence + `slice apply --slice-id`; body-similarity + ambiguity policy;
   matcher-decision audit metadata.

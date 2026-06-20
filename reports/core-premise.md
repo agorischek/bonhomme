@@ -183,21 +183,12 @@ bonhomme is not trying to replace the TypeScript compiler, editor, package manag
 
 The system still renders TypeScript files because existing tooling expects files.
 
-A full rendered file may include hidden metadata comments for compatibility with
-the legacy two-file diff path:
-
-```ts
-export class OrderService /* bonhomme:symbol=6343... */ {
-  displayName(): string /* bonhomme:symbol=63ba... */ {
-    return "OrderService";
-  }
-}
-```
-
-Those comments do not affect TypeScript compilation. Stored slices no longer
-depend on them: `slice create` records the base graph position and scope, renders
-clean TypeScript, and `slice apply --slice-id` asks the language plugin to
-recover identity from the graph-backed slice provenance.
+Rendered TypeScript is clean compatibility output. It does not include
+`bonhomme:symbol=` or `bonhomme:file=` identity comments. `slice create` records
+the base graph position and scope, renders clean TypeScript, and
+`slice apply --slice-id` asks the language plugin to recover identity from the
+graph-backed slice provenance. The legacy two-file diff path can still consume
+older comment-bearing text, but new render output does not produce those anchors.
 
 This is the compatibility bridge:
 
@@ -291,6 +282,9 @@ The current bonhomme prototype implements the core shape of the system:
 - Legacy slice diff for method edits, top-level function edits, deletes, and new files
 - Stored slice provenance for branch, base position, and root symbols
 - Graph-anchored structural operation recovery for stored slices
+- Stale stored-slice apply with operation-level conflict detection
+- Slice recovery attachments that summarize recovered operation decisions
+- Ambiguous structural identity recovery rejected instead of guessed
 - Operation-level merge with `SAFE_MERGE` or `CONFLICT`
 - TypeScript compiler validation after merge
 - Query commands for symbols, references, callers, callees, dependencies, and dependents

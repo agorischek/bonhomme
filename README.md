@@ -1,8 +1,8 @@
 # bonhomme
 
-bonhomme is a Rust/Postgres prototype of a semantic source control system for TypeScript repositories.
+bonhomme is a Rust/Postgres prototype of a semantic source control system for TypeScript and Go repositories.
 
-The operation log is authoritative. The semantic graph and rendered TypeScript files are reconstructed from immutable operations.
+The operation log is authoritative. The semantic graph and rendered source files are reconstructed from immutable operations.
 
 See [docs/spec-coverage.md](docs/spec-coverage.md) for the current implementation coverage and remaining gaps.
 
@@ -37,6 +37,8 @@ For faster compiler validation during merges, point bonhomme at the demo TypeScr
 ```sh
 export BONHOMME_TSC="$PWD/demo/node_modules/.bin/tsc"
 ```
+
+Go support uses the local Go toolchain for parsing, `gofmt`, and validation. Set `BONHOMME_GO` if `go` is not on `PATH`.
 
 ## Demo walkthrough
 
@@ -83,17 +85,24 @@ Then watch `OrderService` grow realistic methods while the graph and operation l
 ```sh
 bonhomme init --name bonhomme-demo
 bonhomme import --repo imported-ts --path examples/typescript-basic --reset
+bonhomme import --repo imported-go --path examples/go-basic --reset
 bonhomme branch create --repo bonhomme-demo --name agent-a --base main
 bonhomme demo spawn --count 32
 bonhomme demo merge-all
 bonhomme simulate --agents 128
+bonhomme simulate --language go --agents 128
 bonhomme slice create --repo bonhomme-demo --branch main --symbol OrderService > slice.json
 bonhomme slice apply --repo bonhomme-demo --slice-id <slice-id> --modified edited-slice.json
 bonhomme render --repo bonhomme-demo --branch main --out rendered
 bonhomme query find-symbol --repo bonhomme-demo --branch main --name OrderService
 bonhomme query find-dependencies --repo imported-ts --branch main --name displayName
+bonhomme query find-callees --repo imported-go --branch main --name Summary
 ```
 
-`bonhomme simulate` resets the demo repository, creates deterministic agent branches, merges them in a stable shuffled order, validates replay/render determinism, and runs `tsc` on the final rendered TypeScript.
+`bonhomme simulate` resets the TypeScript demo repository, creates deterministic agent branches, merges them in a stable shuffled order, validates replay/render determinism, and runs `tsc` on the final rendered TypeScript. `bonhomme simulate --language go` runs the same merge-engine stress path against a Go `OrderService` and validates with `go build`.
 
 `bonhomme slice create` persists slice provenance: the branch, operation position, and root symbols used to render the editable projection. The returned slice is clean TypeScript without `bonhomme:symbol` or `bonhomme:file` identity comments. `bonhomme slice apply --slice-id` uses the stored base graph to recover semantic operations from the edited slice. The older `--original/--modified` apply path is still available as a legacy two-file diff.
+
+Stored-slice applies attach a `SliceRecoveryAttachment` to the created changeset. It records the slice ID, base position, whether the branch had advanced, appended operation IDs, and a compact operation-decision summary for review.
+
+If multiple symbols in the same slice are renamed and rewritten so identity cannot be recovered deterministically, bonhomme rejects the apply instead of asking agents to preserve hidden anchors in TypeScript.

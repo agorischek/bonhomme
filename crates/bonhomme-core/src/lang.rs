@@ -1,3 +1,11 @@
+mod binary;
+mod blob;
+mod registry;
+
+pub use binary::{MAX_INLINE_BINARY_BYTES, decode_binary, encode_binary, is_binary};
+pub use blob::BlobHandler;
+pub use registry::{Handler, HandlerRegistry, read_source_files};
+
 use crate::core::{Operation, SemanticGraph};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

@@ -1,6 +1,7 @@
 mod commands;
 mod files;
 mod queries;
+mod slice_audit;
 
 use crate::api;
 use crate::demo::DEMO_REPOSITORY;
@@ -8,7 +9,7 @@ use anyhow::Result;
 use bonhomme_engine::{DEFAULT_DATABASE_URL, Storage};
 use clap::{Args, Parser, Subcommand};
 use commands::run_storage_command;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{net::SocketAddr, path::PathBuf};
 use uuid::Uuid;
 
 #[derive(Parser)]
@@ -174,6 +175,8 @@ struct SimulateArgs {
     agents: usize,
     #[arg(long, default_value_t = false)]
     conflicts: bool,
+    #[arg(long, default_value = "typescript")]
+    language: String,
 }
 
 #[derive(Subcommand)]
@@ -229,8 +232,7 @@ pub async fn run() -> Result<()> {
         Command::Server(args) => api::serve(Some(cli.database_url), args.addr).await,
         command => {
             let storage =
-                Storage::connect(&cli.database_url, Arc::new(bonhomme_ts::TypeScriptPlugin))
-                    .await?;
+                Storage::connect(&cli.database_url, crate::plugins::language_registry()).await?;
             storage.migrate().await?;
             run_storage_command(storage, command).await
         }

@@ -13,7 +13,7 @@ mod tests;
 
 use anyhow::Result;
 use bonhomme_core::{
-    LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
+    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -31,6 +31,16 @@ pub use validate::validate_typescript_files;
 /// `core` and `storage` never depend on TypeScript directly.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TypeScriptPlugin;
+
+impl Handler for TypeScriptPlugin {
+    fn name(&self) -> &str {
+        "typescript"
+    }
+
+    fn claims(&self, file: &RenderedFile) -> bool {
+        file.path.ends_with(".ts") && !file.path.ends_with(".d.ts")
+    }
+}
 
 impl LanguagePlugin for TypeScriptPlugin {
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {

@@ -25,11 +25,7 @@ struct AppState {
 
 pub async fn serve(database_url: Option<String>, addr: SocketAddr) -> Result<()> {
     let database_url = database_url.unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string());
-    let storage = Storage::connect(
-        &database_url,
-        std::sync::Arc::new(bonhomme_ts::TypeScriptPlugin),
-    )
-    .await?;
+    let storage = Storage::connect(&database_url, crate::plugins::language_registry()).await?;
     storage.migrate().await?;
 
     let app = router(storage);

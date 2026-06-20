@@ -1,9 +1,11 @@
 mod base;
 mod matcher;
+mod references;
 
 use self::{
     base::{BaseClass, BaseFile, base_files_by_path},
     matcher::match_container,
+    references::{ReferencePlan, SymbolIdentity, recover_reference_operations},
 };
 use crate::{
     parse::{ParsedClass, ParsedFile, ParsedFunction, ParsedMethod, parse_files},
@@ -17,8 +19,11 @@ use uuid::Uuid;
 
 #[derive(Default)]
 struct PlannedOperations {
-    deletes: Vec<Operation>,
-    edits: Vec<Operation>,
+    reference_deletes: Vec<Operation>,
+    symbol_deletes: Vec<Operation>,
+    symbol_edits: Vec<Operation>,
+    reference_creates: Vec<Operation>,
+    references: ReferencePlan,
 }
 
 pub fn recover_operations(
@@ -40,7 +45,7 @@ pub fn recover_operations(
                 .get(&path)
                 .with_context(|| format!("edited source for {path} is missing"))?;
             planned
-                .edits
+                .symbol_edits
                 .extend(crate::import_typescript_files(std::slice::from_ref(
                     source,
                 ))?);
@@ -50,8 +55,15 @@ pub fn recover_operations(
         recover_file(base_file, &edited_file, &mut planned)?;
     }
 
-    let mut operations = planned.deletes;
-    operations.extend(planned.edits);
+    let (reference_deletes, reference_creates) =
+        recover_reference_operations(base, &planned.references);
+    planned.reference_deletes.extend(reference_deletes);
+    planned.reference_creates.extend(reference_creates);
+
+    let mut operations = planned.reference_deletes;
+    operations.extend(planned.symbol_deletes);
+    operations.extend(planned.symbol_edits);
+    operations.extend(planned.reference_creates);
     Ok(operations)
 }
 
@@ -69,15 +81,30 @@ fn recover_functions(
     edited_functions: &[ParsedFunction],
     planned: &mut PlannedOperations,
 ) -> Result<()> {
-    let matches = match_container(&base_file.functions, edited_functions, "function")?;
+    let matches = match_container(
+        &base_file.functions,
+        edited_functions,
+        "function",
+        &format!("file {}", base_file.path),
+    )?;
     for (base_index, edited_index) in matches.matched {
         let base = &base_file.functions[base_index];
         let edited = &edited_functions[edited_index];
-        if base.name != edited.name
-            || base.signature != edited.signature
-            || base.body.trim() != edited.body.trim()
-        {
-            planned.edits.push(Operation::UpdateSymbol {
+        let body_changed = base.body.trim() != edited.body.trim();
+        if body_changed {
+            planned
+                .references
+                .edited_calls
+                .insert(base.id, edited.calls.clone());
+        }
+        if base.name != edited.name {
+            planned
+                .references
+                .renamed_symbols
+                .insert(base.id, edited.name.clone());
+        }
+        if base.name != edited.name || base.signature != edited.signature || body_changed {
+            planned.symbol_edits.push(Operation::UpdateSymbol {
                 symbol_id: base.id,
                 name: (base.name != edited.name).then(|| edited.name.clone()),
                 body: Some(edited.body.clone()),
@@ -91,8 +118,18 @@ fn recover_functions(
 
     for edited_index in matches.added {
         let edited = &edited_functions[edited_index];
-        planned.edits.push(Operation::CreateSymbol {
-            symbol_id: stable_import_uuid(&format!("function:{}:{}", base_file.path, edited.name)),
+        let symbol_id = stable_import_uuid(&format!("function:{}:{}", base_file.path, edited.name));
+        planned.references.created_symbols.push(SymbolIdentity {
+            id: symbol_id,
+            parent_id: Some(base_file.id),
+            name: edited.name.clone(),
+        });
+        planned
+            .references
+            .edited_calls
+            .insert(symbol_id, edited.calls.clone());
+        planned.symbol_edits.push(Operation::CreateSymbol {
+            symbol_id,
             parent_id: Some(base_file.id),
             kind: "function".to_string(),
             name: edited.name.clone(),
@@ -105,9 +142,11 @@ fn recover_functions(
     }
 
     for base_index in matches.deleted {
-        planned.deletes.push(Operation::DeleteSymbol {
-            symbol_id: base_file.functions[base_index].id,
-        });
+        let symbol_id = base_file.functions[base_index].id;
+        planned.references.deleted_symbols.insert(symbol_id);
+        planned
+            .symbol_deletes
+            .push(Operation::DeleteSymbol { symbol_id });
     }
 
     Ok(())
@@ -153,15 +192,30 @@ fn recover_methods(
     edited_methods: &[ParsedMethod],
     planned: &mut PlannedOperations,
 ) -> Result<()> {
-    let matches = match_container(&base_class.methods, edited_methods, "method")?;
+    let matches = match_container(
+        &base_class.methods,
+        edited_methods,
+        "method",
+        &format!("class {}", base_class.name),
+    )?;
     for (base_index, edited_index) in matches.matched {
         let base = &base_class.methods[base_index];
         let edited = &edited_methods[edited_index];
-        if base.name != edited.name
-            || base.signature != edited.signature
-            || base.body.trim() != edited.body.trim()
-        {
-            planned.edits.push(Operation::UpdateSymbol {
+        let body_changed = base.body.trim() != edited.body.trim();
+        if body_changed {
+            planned
+                .references
+                .edited_calls
+                .insert(base.id, edited.calls.clone());
+        }
+        if base.name != edited.name {
+            planned
+                .references
+                .renamed_symbols
+                .insert(base.id, edited.name.clone());
+        }
+        if base.name != edited.name || base.signature != edited.signature || body_changed {
+            planned.symbol_edits.push(Operation::UpdateSymbol {
                 symbol_id: base.id,
                 name: (base.name != edited.name).then(|| edited.name.clone()),
                 body: Some(edited.body.clone()),
@@ -172,11 +226,21 @@ fn recover_methods(
 
     for edited_index in matches.added {
         let edited = &edited_methods[edited_index];
-        planned.edits.push(Operation::CreateSymbol {
-            symbol_id: stable_import_uuid(&format!(
-                "method:{}:{}:{}",
-                base_file.path, base_class.id, edited.name
-            )),
+        let symbol_id = stable_import_uuid(&format!(
+            "method:{}:{}:{}",
+            base_file.path, base_class.id, edited.name
+        ));
+        planned.references.created_symbols.push(SymbolIdentity {
+            id: symbol_id,
+            parent_id: Some(base_class.id),
+            name: edited.name.clone(),
+        });
+        planned
+            .references
+            .edited_calls
+            .insert(symbol_id, edited.calls.clone());
+        planned.symbol_edits.push(Operation::CreateSymbol {
+            symbol_id,
             parent_id: Some(base_class.id),
             kind: "method".to_string(),
             name: edited.name.clone(),
@@ -186,9 +250,11 @@ fn recover_methods(
     }
 
     for base_index in matches.deleted {
-        planned.deletes.push(Operation::DeleteSymbol {
-            symbol_id: base_class.methods[base_index].id,
-        });
+        let symbol_id = base_class.methods[base_index].id;
+        planned.references.deleted_symbols.insert(symbol_id);
+        planned
+            .symbol_deletes
+            .push(Operation::DeleteSymbol { symbol_id });
     }
 
     Ok(())

@@ -33,8 +33,8 @@ function SimulationRow({ result }: { result: SimulationResult }) {
       </span>
       <code>
         replay {result.replayDeterministic ? 'ok' : 'failed'} / render{' '}
-        {result.renderDeterministic ? 'ok' : 'failed'} / tsc{' '}
-        {result.tscValidated ? 'ok' : 'failed'}
+        {result.renderDeterministic ? 'ok' : 'failed'} / {result.validator}{' '}
+        {result.toolchainValidated ? 'ok' : 'failed'}
       </code>
     </div>
   )

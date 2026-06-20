@@ -110,6 +110,8 @@ export interface MergeResult {
 
 export interface SimulationResult {
   repository: string
+  language: string
+  validator: string
   agentCount: number
   attemptedMerges: number
   safeMerges: number
@@ -120,5 +122,6 @@ export interface SimulationResult {
   finalReferences: number
   replayDeterministic: boolean
   renderDeterministic: boolean
+  toolchainValidated: boolean
   tscValidated: boolean
 }
