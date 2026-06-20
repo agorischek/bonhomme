@@ -6,6 +6,7 @@ use bonhomme_engine::Storage;
 use serde_json::json;
 use std::collections::BTreeMap;
 use tokio::fs;
+use uuid::Uuid;
 
 use super::files::read_rendered_files;
 use super::queries::{
@@ -215,6 +216,22 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
                         .context("slice apply without --slice-id requires --original")?;
                     let original = read_rendered_files(original_path).await?;
                     let operations = storage.plugin().diff(&original, &modified)?;
+                    // Build a base graph from the original so a relocated symbol is detected as a
+                    // move on the legacy two-blob diff path too. Best-effort: if the original will
+                    // not import cleanly, fall back to the raw diff.
+                    let operations = match storage.plugin().import(&original) {
+                        Ok(base_ops) => {
+                            let mut base_graph = SemanticGraph::default();
+                            let built = base_ops
+                                .iter()
+                                .try_for_each(|op| base_graph.apply_operation(Uuid::new_v4(), op));
+                            match built {
+                                Ok(()) => bonhomme_core::detect_moves(operations, &base_graph),
+                                Err(_) => operations,
+                            }
+                        }
+                        Err(_) => operations,
+                    };
                     (branch, operations, None)
                 };
                 let task = storage.create_task(repository.id, &args.title).await?;
