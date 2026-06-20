@@ -8,8 +8,13 @@ repository.workspace = true
 [dependencies]
 bonhomme-core.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
+turso.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

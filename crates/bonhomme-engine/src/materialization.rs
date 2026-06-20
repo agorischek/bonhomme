@@ -1,7 +1,4 @@
-use crate::{
-    CacheStatus, MaterializedBranch, Storage,
-    rows::{GraphCacheRow, operation_fingerprint},
-};
+use crate::{CacheStatus, MaterializedBranch, Storage, rows::operation_fingerprint};
 use anyhow::{Result, bail};
 use bonhomme_core::{RenderedFile, SemanticGraph, materialize};
 use uuid::Uuid;
@@ -92,24 +89,16 @@ impl Storage {
         operation_count: i64,
         operation_fingerprint: &str,
     ) -> Result<Option<(SemanticGraph, Vec<RenderedFile>)>> {
-        let Some(row) = sqlx::query_as::<_, GraphCacheRow>(
-            r#"
-            SELECT graph, rendered_files
-            FROM graph_cache
-            WHERE branch_id = $1 AND operation_count = $2 AND operation_fingerprint = $3
-            "#,
-        )
-        .bind(branch_id)
-        .bind(operation_count)
-        .bind(operation_fingerprint)
-        .fetch_optional(&self.pool)
-        .await?
+        let Some((graph, files)) = self
+            .backend
+            .get_graph_cache(branch_id, operation_count, operation_fingerprint)
+            .await?
         else {
             return Ok(None);
         };
 
-        let graph = serde_json::from_value(row.graph)?;
-        let files = serde_json::from_value(row.rendered_files)?;
+        let graph = serde_json::from_value(graph)?;
+        let files = serde_json::from_value(files)?;
         Ok(Some((graph, files)))
     }
 
@@ -122,26 +111,15 @@ impl Storage {
         graph: &SemanticGraph,
         files: &[RenderedFile],
     ) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO graph_cache (branch_id, repository_id, operation_count, operation_fingerprint, graph, rendered_files)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (branch_id) DO UPDATE
-            SET operation_count = EXCLUDED.operation_count,
-                operation_fingerprint = EXCLUDED.operation_fingerprint,
-                graph = EXCLUDED.graph,
-                rendered_files = EXCLUDED.rendered_files,
-                updated_at = now()
-            "#,
-        )
-        .bind(branch_id)
-        .bind(repository_id)
-        .bind(operation_count)
-        .bind(operation_fingerprint)
-        .bind(serde_json::to_value(graph)?)
-        .bind(serde_json::to_value(files)?)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
+        self.backend
+            .store_graph_cache(
+                repository_id,
+                branch_id,
+                operation_count,
+                operation_fingerprint,
+                serde_json::to_value(graph)?,
+                serde_json::to_value(files)?,
+            )
+            .await
     }
 }
