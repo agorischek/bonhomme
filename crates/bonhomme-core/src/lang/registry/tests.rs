@@ -286,6 +286,35 @@ fn read_source_files_walks_all_files_skipping_ignored_and_binary() {
 }
 
 #[test]
+fn read_source_files_respects_gitignore_without_dropping_hidden_sources() {
+    let root = std::env::temp_dir().join(format!(
+        "bonhomme-ignore-{}-{}",
+        std::process::id(),
+        line!()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join(".config")).unwrap();
+    std::fs::create_dir_all(root.join(".studios/construction-runs")).unwrap();
+    std::fs::create_dir_all(root.join("coverage")).unwrap();
+    std::fs::write(
+        root.join(".gitignore"),
+        ".studios/\ncoverage/\nignored.txt\n",
+    )
+    .unwrap();
+    std::fs::write(root.join(".config/source.json"), "{}\n").unwrap();
+    std::fs::write(root.join(".studios/construction-runs/log.txt"), "ignored\n").unwrap();
+    std::fs::write(root.join("coverage/lcov.info"), "ignored\n").unwrap();
+    std::fs::write(root.join("ignored.txt"), "ignored\n").unwrap();
+    std::fs::write(root.join("src.txt"), "tracked\n").unwrap();
+
+    let files = read_source_files(&root).unwrap();
+    let paths: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(paths, vec![".config/source.json", ".gitignore", "src.txt"]);
+}
+
+#[test]
 fn unparseable_file_degrades_to_blob_by_default() {
     let registry = registry();
     // `a.up` parses; `b.up` is "broken" — only the broken file should fall back to blob.

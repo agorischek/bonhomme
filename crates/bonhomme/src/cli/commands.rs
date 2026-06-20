@@ -32,6 +32,8 @@ fn handler_breakdown(graph: &SemanticGraph) -> BTreeMap<String, usize> {
 pub(super) async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
     match command {
         Command::Server(_) => unreachable!("handled before storage command dispatch"),
+        Command::Explore(_) => unreachable!("handled before storage command dispatch"),
+        Command::Session { .. } => unreachable!("handled before storage command dispatch"),
         Command::Init(args) => {
             let (repository, branch) = storage.init_repository(&args.name).await?;
             println!(
@@ -78,18 +80,22 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
                     }),
                 )
                 .await?;
-            let mut appended = Vec::new();
-            for operation in operations {
-                appended.push(
-                    storage
-                        .append_operation(repository.id, branch.id, changeset.id, operation)
-                        .await?,
-                );
-            }
+            let appended = storage
+                .append_operations(repository.id, branch.id, changeset.id, operations)
+                .await?;
             let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
             materialized.graph.validate()?;
+            let mut validated = false;
+            let mut validation_error = None;
             if !args.no_validate {
-                storage.plugin().validate(&materialized.files).await?;
+                match storage.plugin().validate(&materialized.files).await {
+                    Ok(()) => validated = true,
+                    Err(error) => {
+                        let message = compact_error(&error);
+                        eprintln!("bonhomme: validation failed after import: {message}");
+                        validation_error = Some(message);
+                    }
+                }
             }
             println!(
                 "{}",
@@ -101,7 +107,8 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
                     "symbols": materialized.graph.symbols.len(),
                     "references": materialized.graph.references.len(),
                     "handlerBreakdown": handler_breakdown(&materialized.graph),
-                    "validated": !args.no_validate
+                    "validated": validated,
+                    "validationError": validation_error
                 }))?
             );
         }
@@ -356,4 +363,25 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
     }
 
     Ok(())
+}
+
+fn compact_error(error: &anyhow::Error) -> String {
+    const MAX_CHARS: usize = 4000;
+    const MAX_LINES: usize = 20;
+
+    let message = format!("{error:#}");
+    let line_count = message.lines().count();
+    let mut compact = message
+        .lines()
+        .take(MAX_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if line_count > MAX_LINES {
+        compact.push_str("\n...");
+    }
+    if compact.len() > MAX_CHARS {
+        compact.truncate(MAX_CHARS);
+        compact.push_str("...");
+    }
+    compact
 }

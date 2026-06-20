@@ -60,7 +60,36 @@ pub(crate) fn operations_from_parsed_crate(parsed: &ParsedCrate) -> Result<Vec<O
         operations.extend(method_operations(file, &mut indexes)?);
     }
     operations.extend(reference_operations(&indexes));
+    disambiguate_duplicate_sibling_names(&mut operations);
     Ok(operations)
+}
+
+fn disambiguate_duplicate_sibling_names(operations: &mut [Operation]) {
+    let mut seen = BTreeMap::<(Option<Uuid>, String, String), usize>::new();
+    for operation in operations {
+        let Operation::CreateSymbol {
+            parent_id,
+            kind,
+            name,
+            metadata,
+            ..
+        } = operation
+        else {
+            continue;
+        };
+        let original_name = name.clone();
+        let key = (*parent_id, kind.clone(), original_name.clone());
+        let count = seen.entry(key).or_insert(0);
+        if *count > 0 {
+            *name = format!("{original_name}#{}", *count + 1);
+            if let Some(object) = metadata.as_object_mut() {
+                object
+                    .entry("originalName")
+                    .or_insert_with(|| json!(original_name));
+            }
+        }
+        *count += 1;
+    }
 }
 
 fn parse_file(path: &str, syntax: syn::File) -> ParsedFile {
@@ -83,8 +112,23 @@ fn parse_file(path: &str, syntax: syn::File) -> ParsedFile {
             other => file.declarations.push(parse_raw_item(index, other)),
         }
     }
+    assign_graph_names(&mut file.declarations);
 
     file
+}
+
+fn assign_graph_names(declarations: &mut [Declaration]) {
+    let mut seen = BTreeMap::<(String, String), usize>::new();
+    for declaration in declarations {
+        let key = (declaration.kind.clone(), declaration.name.clone());
+        let count = seen.entry(key).or_insert(0);
+        declaration.graph_name = if *count == 0 {
+            declaration.name.clone()
+        } else {
+            format!("{}#{}", declaration.name, *count + 1)
+        };
+        *count += 1;
+    }
 }
 
 fn parse_struct(item: ItemStruct) -> Declaration {
@@ -125,7 +169,7 @@ fn parse_trait(item: ItemTrait) -> Declaration {
             .filter_map(|trait_item| match trait_item {
                 TraitItem::Fn(method) => Some(RustMethod {
                     name: method.sig.ident.to_string(),
-                    signature: tokens(&method.sig),
+                    signature: trait_signature(&method.attrs, &method.sig),
                     body: method.default.as_ref().map(block_body),
                     impl_type: None,
                     impl_header: None,
@@ -146,7 +190,7 @@ fn parse_function(item: ItemFn) -> Declaration {
     Declaration {
         kind: "function".to_string(),
         name: item.sig.ident.to_string(),
-        signature: Some(signature(&item.vis, &item.sig)),
+        signature: Some(signature_with_attrs(&item.attrs, &item.vis, &item.sig)),
         body: Some(block_body(&item.block)),
         calls: calls_in_block(&item.block),
         ..Declaration::default()
@@ -189,7 +233,7 @@ fn parse_impl(item: ItemImpl) -> Declaration {
         .filter_map(|impl_item| match impl_item {
             ImplItem::Fn(method) => Some(RustMethod {
                 name: method.sig.ident.to_string(),
-                signature: signature(&method.vis, &method.sig),
+                signature: signature_with_attrs(&method.attrs, &method.vis, &method.sig),
                 body: Some(block_body(&method.block)),
                 impl_type: impl_type.clone(),
                 impl_header: Some(impl_header.clone()),
@@ -228,14 +272,14 @@ fn index_crate(parsed: &ParsedCrate, indexes: &mut ImportIndexes) {
                         .types_by_name
                         .entry(declaration.name.clone())
                         .or_default()
-                        .push(type_id(&file.path, &declaration.name));
+                        .push(type_id(&file.path, &declaration.graph_name));
                 }
                 "function" => {
                     indexes
                         .functions_by_name
                         .entry(declaration.name.clone())
                         .or_default()
-                        .push(function_id(&file.path, &declaration.name));
+                        .push(function_id(&file.path, &declaration.graph_name));
                 }
                 _ => {}
             }
@@ -248,7 +292,7 @@ fn file_operation(file: &ParsedFile) -> Operation {
         symbol_id: file_id(&file.path),
         parent_id: None,
         kind: "file".to_string(),
-        name: file_name(&file.path),
+        name: file.path.clone(),
         body: None,
         metadata: json!({
             "handler": "rust",
@@ -287,16 +331,17 @@ fn type_operations(
     declaration: &Declaration,
     indexes: &mut ImportIndexes,
 ) -> Vec<Operation> {
-    let symbol_id = type_id(&file.path, &declaration.name);
+    let symbol_id = type_id(&file.path, &declaration.graph_name);
     let mut operations = vec![Operation::CreateSymbol {
         symbol_id,
         parent_id: Some(file_id),
         kind: declaration.kind.clone(),
-        name: declaration.name.clone(),
+        name: declaration.graph_name.clone(),
         body: None,
         metadata: json!({
             "declaration": declaration.declaration,
             "path": file.path,
+            "originalName": declaration.name,
         }),
     }];
 
@@ -363,16 +408,17 @@ fn function_operation(
     declaration: &Declaration,
     indexes: &mut ImportIndexes,
 ) -> Operation {
-    let symbol_id = function_id(&file.path, &declaration.name);
+    let symbol_id = function_id(&file.path, &declaration.graph_name);
     indexes.calls.insert(symbol_id, declaration.calls.clone());
     Operation::CreateSymbol {
         symbol_id,
         parent_id: Some(file_id),
         kind: "function".to_string(),
-        name: declaration.name.clone(),
+        name: declaration.graph_name.clone(),
         body: declaration.body.clone(),
         metadata: json!({
             "signature": declaration.signature.as_deref().unwrap_or(""),
+            "originalName": declaration.name,
             "path": file.path,
         }),
     }
@@ -380,13 +426,14 @@ fn function_operation(
 
 fn value_operation(file_id: Uuid, file: &ParsedFile, declaration: &Declaration) -> Operation {
     Operation::CreateSymbol {
-        symbol_id: value_id(&file.path, &declaration.kind, &declaration.name),
+        symbol_id: value_id(&file.path, &declaration.kind, &declaration.graph_name),
         parent_id: Some(file_id),
         kind: declaration.kind.clone(),
-        name: declaration.name.clone(),
+        name: declaration.graph_name.clone(),
         body: None,
         metadata: json!({
             "declaration": declaration.declaration,
+            "originalName": declaration.name,
             "path": file.path,
         }),
     }
@@ -402,15 +449,16 @@ fn impl_operations(
         .impl_header
         .as_deref()
         .context("Rust impl declaration missing header")?;
-    let impl_id = impl_id(&file.path, header);
+    let impl_id = impl_id(&file.path, &declaration.graph_name);
     let mut operations = vec![Operation::CreateSymbol {
         symbol_id: impl_id,
         parent_id: Some(file_id),
         kind: "impl".to_string(),
-        name: header.to_string(),
+        name: declaration.graph_name.clone(),
         body: None,
         metadata: json!({
             "declaration": header,
+            "originalName": declaration.name,
             "path": file.path,
         }),
     }];
@@ -601,6 +649,26 @@ fn signature(vis: &Visibility, sig: &syn::Signature) -> String {
         .to_string()
 }
 
+fn signature_with_attrs(
+    attrs: &[syn::Attribute],
+    vis: &Visibility,
+    sig: &syn::Signature,
+) -> String {
+    format!("{} {}", attrs_text(attrs), signature(vis, sig))
+        .trim()
+        .to_string()
+}
+
+fn trait_signature(attrs: &[syn::Attribute], sig: &syn::Signature) -> String {
+    format!("{} {}", attrs_text(attrs), tokens(sig))
+        .trim()
+        .to_string()
+}
+
+fn attrs_text(attrs: &[syn::Attribute]) -> String {
+    attrs.iter().map(tokens).collect::<Vec<_>>().join("\n")
+}
+
 fn block_body(block: &syn::Block) -> String {
     block
         .stmts
@@ -667,10 +735,6 @@ fn type_name(ty: &Type) -> Option<String> {
         Type::Group(group) => type_name(&group.elem),
         _ => None,
     }
-}
-
-fn file_name(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
 fn tokens<T: ToTokens>(node: T) -> String {

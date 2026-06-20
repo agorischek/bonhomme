@@ -13,10 +13,15 @@ use serde_json::Value;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{Attachment, StoredSlice};
 pub(crate) use self::postgres::PostgresBackend;
+use crate::{Attachment, StoredSlice};
 // `self::` disambiguates the child module from the extern `turso` crate.
 pub(crate) use self::turso::TursoBackend;
+
+pub(crate) struct PendingOperation {
+    pub(crate) op_type: String,
+    pub(crate) payload: Value,
+}
 
 /// The leaf persistence operations. Each is implemented per database; the high-level engine logic
 /// lives on [`crate::Storage`] and is written once on top of this trait.
@@ -65,6 +70,28 @@ pub(crate) trait StorageBackend: Send + Sync {
         op_type: &str,
         payload: Value,
     ) -> Result<OperationRecord>;
+    async fn append_operations(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        operations: Vec<PendingOperation>,
+    ) -> Result<Vec<OperationRecord>> {
+        let mut appended = Vec::with_capacity(operations.len());
+        for operation in operations {
+            appended.push(
+                self.append_operation(
+                    repository_id,
+                    branch_id,
+                    changeset_id,
+                    &operation.op_type,
+                    operation.payload,
+                )
+                .await?,
+            );
+        }
+        Ok(appended)
+    }
     async fn list_operations(&self, repository_id: Uuid) -> Result<Vec<OperationRecord>>;
     async fn list_own_operations(
         &self,

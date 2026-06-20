@@ -24,8 +24,11 @@ async fn returning(conn: &Connection) -> anyhow::Result<String> {
 }
 
 async fn on_conflict(conn: &Connection) -> anyhow::Result<String> {
-    conn.execute("INSERT INTO t (id, name) VALUES (?1, ?2)", params!["c1", "beta"])
-        .await?;
+    conn.execute(
+        "INSERT INTO t (id, name) VALUES (?1, ?2)",
+        params!["c1", "beta"],
+    )
+    .await?;
     conn.execute(
         "INSERT INTO t (id, name) VALUES (?1, ?2) ON CONFLICT(name) DO UPDATE SET payload = ?3",
         params!["c2", "beta", "updated"],
@@ -45,8 +48,11 @@ async fn on_conflict_nothing(conn: &Connection) -> anyhow::Result<String> {
 
 async fn transaction_raw(conn: &Connection) -> anyhow::Result<String> {
     conn.execute("BEGIN", ()).await?;
-    conn.execute("INSERT INTO t (id, name) VALUES (?1, ?2)", params!["t1", "gamma"])
-        .await?;
+    conn.execute(
+        "INSERT INTO t (id, name) VALUES (?1, ?2)",
+        params!["t1", "gamma"],
+    )
+    .await?;
     conn.execute("COMMIT", ()).await?;
     Ok("BEGIN/COMMIT accepted".into())
 }

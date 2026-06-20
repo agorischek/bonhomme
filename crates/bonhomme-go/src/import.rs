@@ -85,7 +85,7 @@ fn file_operation(file: &ParsedFile) -> Operation {
         symbol_id: file_id(&file.path),
         parent_id: None,
         kind: "file".to_string(),
-        name: file_name(&file.path),
+        name: file.path.clone(),
         body: None,
         metadata: json!({
             "handler": "go",
@@ -289,8 +289,4 @@ pub(crate) fn interface_method_id(owner: &str, name: &str) -> Uuid {
 
 pub(crate) fn value_id(kind: &str, name: &str) -> Uuid {
     stable_go_uuid(&format!("{kind}:{name}"))
-}
-
-fn file_name(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
 }

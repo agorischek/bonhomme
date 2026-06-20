@@ -139,6 +139,28 @@ impl Storage {
             .await
     }
 
+    pub async fn append_operations(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        operations: Vec<Operation>,
+    ) -> Result<Vec<OperationRecord>> {
+        let operations = operations
+            .into_iter()
+            .map(|operation| {
+                let op_type = operation.op_type().to_string();
+                Ok(backend::PendingOperation {
+                    op_type,
+                    payload: serde_json::to_value(operation)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.backend
+            .append_operations(repository_id, branch_id, changeset_id, operations)
+            .await
+    }
+
     pub async fn list_changesets(&self, repository_id: Uuid) -> Result<Vec<ChangeSet>> {
         self.backend.list_changesets(repository_id).await
     }
@@ -197,8 +219,9 @@ impl Storage {
         &self,
         branch_id: Uuid,
         visible_limit: Option<i64>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<OperationRecord>>> + Send + '_>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Vec<OperationRecord>>> + Send + '_>,
+    > {
         Box::pin(async move {
             let branch = self.branch_by_id(branch_id).await?;
             let mut operations = if let Some(base_branch_id) = branch.base_branch_id {

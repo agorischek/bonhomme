@@ -5,7 +5,7 @@ use serde_json::Value;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
-use super::StorageBackend;
+use super::{PendingOperation, StorageBackend};
 use crate::{
     Attachment, StoredSlice,
     rows::{
@@ -273,6 +273,54 @@ impl StorageBackend for PostgresBackend {
         .await?;
         tx.commit().await?;
         row.try_into()
+    }
+
+    async fn append_operations(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        operations: Vec<PendingOperation>,
+    ) -> Result<Vec<OperationRecord>> {
+        if operations.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)")
+            .bind(branch_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let mut next_position: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(position), 0) + 1 FROM operations WHERE branch_id = $1",
+        )
+        .bind(branch_id)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        let mut appended = Vec::with_capacity(operations.len());
+        for operation in operations {
+            let row = sqlx::query_as::<_, OperationRow>(
+                r#"
+                INSERT INTO operations (id, repository_id, branch_id, changeset_id, position, op_type, payload)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id, repository_id, branch_id, changeset_id, position, op_type, payload, created_at
+                "#,
+            )
+            .bind(Uuid::new_v4())
+            .bind(repository_id)
+            .bind(branch_id)
+            .bind(changeset_id)
+            .bind(next_position)
+            .bind(operation.op_type)
+            .bind(operation.payload)
+            .fetch_one(&mut *tx)
+            .await?;
+            appended.push(row.try_into()?);
+            next_position += 1;
+        }
+        tx.commit().await?;
+        Ok(appended)
     }
 
     async fn list_operations(&self, repository_id: Uuid) -> Result<Vec<OperationRecord>> {

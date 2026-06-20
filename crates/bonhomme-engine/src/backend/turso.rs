@@ -9,7 +9,7 @@ use serde_json::Value;
 use turso::{Builder, Connection, Database, Row, Value as TursoValue, params};
 use uuid::Uuid;
 
-use super::StorageBackend;
+use super::{PendingOperation, StorageBackend};
 use crate::{Attachment, StoredSlice};
 
 const SCHEMA: &[&str] = &[
@@ -178,7 +178,12 @@ impl StorageBackend for TursoBackend {
                 params![name],
             )
             .await?;
-        repository(&rows.next().await?.with_context(|| format!("repository {name} does not exist"))?)
+        repository(
+            &rows
+                .next()
+                .await?
+                .with_context(|| format!("repository {name} does not exist"))?,
+        )
     }
 
     async fn repository_by_id(&self, id: Uuid) -> Result<Repository> {
@@ -189,7 +194,12 @@ impl StorageBackend for TursoBackend {
                 params![id.to_string()],
             )
             .await?;
-        repository(&rows.next().await?.with_context(|| format!("repository {id} does not exist"))?)
+        repository(
+            &rows
+                .next()
+                .await?
+                .with_context(|| format!("repository {id} does not exist"))?,
+        )
     }
 
     async fn ensure_main_branch(&self, repository_id: Uuid) -> Result<Branch> {
@@ -244,7 +254,12 @@ impl StorageBackend for TursoBackend {
                 params![repository_id.to_string(), name],
             )
             .await?;
-        branch(&rows.next().await?.with_context(|| format!("branch {name} does not exist"))?)
+        branch(
+            &rows
+                .next()
+                .await?
+                .with_context(|| format!("branch {name} does not exist"))?,
+        )
     }
 
     async fn branch_by_id(&self, branch_id: Uuid) -> Result<Branch> {
@@ -256,7 +271,12 @@ impl StorageBackend for TursoBackend {
                 params![branch_id.to_string()],
             )
             .await?;
-        branch(&rows.next().await?.with_context(|| format!("branch {branch_id} does not exist"))?)
+        branch(
+            &rows
+                .next()
+                .await?
+                .with_context(|| format!("branch {branch_id} does not exist"))?,
+        )
     }
 
     async fn list_branches(&self, repository_id: Uuid) -> Result<Vec<Branch>> {
@@ -365,6 +385,50 @@ impl StorageBackend for TursoBackend {
         operation(&one(&mut rows).await?)
     }
 
+    async fn append_operations(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        operations: Vec<PendingOperation>,
+    ) -> Result<Vec<OperationRecord>> {
+        if operations.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.conn().await?;
+        let mut rows = conn
+            .query(
+                "SELECT COALESCE(MAX(position), 0) + 1 FROM operations WHERE branch_id = ?1",
+                params![branch_id.to_string()],
+            )
+            .await?;
+        let mut next_position = int(&one(&mut rows).await?, 0)?;
+        let mut appended = Vec::with_capacity(operations.len());
+
+        for pending in operations {
+            let mut rows = conn
+                .query(
+                "INSERT INTO operations (id, repository_id, branch_id, changeset_id, position, op_type, payload)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 RETURNING id, repository_id, branch_id, changeset_id, position, op_type, payload, created_at",
+                params![
+                    Uuid::new_v4().to_string(),
+                    repository_id.to_string(),
+                    branch_id.to_string(),
+                    changeset_id.to_string(),
+                    next_position,
+                    pending.op_type,
+                    serde_json::to_string(&pending.payload)?
+                ],
+            )
+            .await?;
+            appended.push(operation(&one(&mut rows).await?)?);
+            next_position += 1;
+        }
+        Ok(appended)
+    }
+
     async fn list_operations(&self, repository_id: Uuid) -> Result<Vec<OperationRecord>> {
         let conn = self.conn().await?;
         let mut rows = conn
@@ -435,7 +499,12 @@ impl StorageBackend for TursoBackend {
                 params![slice_id.to_string()],
             )
             .await?;
-        slice(&rows.next().await?.with_context(|| format!("slice {slice_id} does not exist"))?)
+        slice(
+            &rows
+                .next()
+                .await?
+                .with_context(|| format!("slice {slice_id} does not exist"))?,
+        )
     }
 
     async fn add_attachment(
@@ -521,7 +590,11 @@ impl StorageBackend for TursoBackend {
 // ---- row mapping ----
 
 async fn one(rows: &mut turso::Rows) -> Result<Row> {
-    rows.next().await?.context("expected a returned row")
+    let row = rows.next().await?.context("expected a returned row")?;
+    if rows.next().await?.is_some() {
+        bail!("expected exactly one returned row")
+    }
+    Ok(row)
 }
 
 async fn collect<T>(rows: &mut turso::Rows, map: fn(&Row) -> Result<T>) -> Result<Vec<T>> {

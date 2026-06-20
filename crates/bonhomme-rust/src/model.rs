@@ -14,6 +14,7 @@ pub(crate) struct ParsedFile {
 pub(crate) struct Declaration {
     pub(crate) kind: String,
     pub(crate) name: String,
+    pub(crate) graph_name: String,
     pub(crate) declaration: String,
     pub(crate) signature: Option<String>,
     pub(crate) body: Option<String>,

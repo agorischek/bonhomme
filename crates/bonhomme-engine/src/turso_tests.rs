@@ -99,13 +99,26 @@ async fn append_allocates_sequential_positions() {
         .append_operation(repo.id, main.id, changeset.id, create_symbol("beta"))
         .await
         .unwrap();
+    let batched = storage
+        .append_operations(
+            repo.id,
+            main.id,
+            changeset.id,
+            vec![create_symbol("gamma"), create_symbol("delta")],
+        )
+        .await
+        .unwrap();
     assert_eq!(first.position, 1);
     assert_eq!(second.position, 2);
+    assert_eq!(batched[0].position, 3);
+    assert_eq!(batched[1].position, 4);
 
     let own = storage.list_own_operations(main.id, None).await.unwrap();
-    assert_eq!(own.len(), 2);
+    assert_eq!(own.len(), 4);
     assert_eq!(own[0].position, 1);
     assert_eq!(own[1].position, 2);
+    assert_eq!(own[2].position, 3);
+    assert_eq!(own[3].position, 4);
 
     // payload round-tripped through TEXT and back into a typed Operation.
     assert!(matches!(
@@ -238,7 +251,10 @@ async fn reset_clears_all_child_rows() {
         .append_operation(repo.id, main.id, changeset.id, create_symbol("alpha"))
         .await
         .unwrap();
-    storage.create_branch(repo.id, "feature", "main").await.unwrap();
+    storage
+        .create_branch(repo.id, "feature", "main")
+        .await
+        .unwrap();
 
     let (fresh_repo, _) = storage.reset_repository("demo").await.unwrap();
     assert!(
