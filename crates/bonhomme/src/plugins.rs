@@ -5,6 +5,7 @@ use bonhomme_fallback::{
     JsonHandler, MarkdownHandler, TomlHandler, TreeSitterHandler, YamlHandler,
 };
 use bonhomme_go::GoPlugin;
+use bonhomme_rust::RustPlugin;
 use bonhomme_ts::TypeScriptPlugin;
 
 /// Build the per-file handler router injected into [`bonhomme_engine::Storage`]. This is the one
@@ -24,12 +25,13 @@ fn handler_registry() -> HandlerRegistry {
     HandlerRegistry::new(vec![
         Arc::new(TypeScriptPlugin) as Arc<dyn Handler>,
         Arc::new(GoPlugin),
+        Arc::new(RustPlugin),
         Arc::new(JsonHandler),
         Arc::new(MarkdownHandler),
         Arc::new(TomlHandler),
         Arc::new(YamlHandler),
-        // Tree-sitter is the broad structural-lite tier (Python, Rust, …); it claims grammar
-        // extensions with no full plugin and sits just above the terminal blob floor.
+        // Tree-sitter is the broad structural-lite tier (Python, and any future grammar that has
+        // not graduated to a full plugin); it sits just above the terminal blob floor.
         Arc::new(TreeSitterHandler),
         Arc::new(BlobHandler),
     ])
@@ -78,6 +80,7 @@ mod tests {
                 "src/app.ts",
                 "export function f(): number {\n  return 1;\n}\n",
             ),
+            rf("src/lib.rs", "pub fn answer() -> usize {\n    42\n}\n"),
             rf("package.json", "{\"name\":\"demo\"}"),
             rf("README.md", "# Title\n\nsome text\n"),
             rf("Cargo.toml", "[package]\nname = \"demo\"\n"),
@@ -92,6 +95,7 @@ mod tests {
         // Each file routed to the right handler; LICENSE and the binary are the two opaque blobs.
         let breakdown = registry.handler_breakdown(&graph);
         assert_eq!(breakdown.get("typescript"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("rust"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("json"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("markdown"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("toml"), Some(&1), "{breakdown:?}");

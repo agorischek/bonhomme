@@ -1,0 +1,20 @@
+[package]
+name = "bonhomme-rust"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bonhomme-core.workspace = true
+anyhow.workspace = true
+prettyplease.workspace = true
+quote.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+syn.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true

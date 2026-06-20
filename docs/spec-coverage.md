@@ -11,23 +11,27 @@ bonhomme currently implements a runnable v1 prototype, not a complete production
 - deterministic graph replay from operation records
 - validation for duplicate IDs, dangling parents, dangling references, and duplicate sibling symbols
 - TypeScript import for conservative `.ts` subsets: files, classes, methods, properties, top-level functions, and call references
-- per-file handler registry with TypeScript, Go, and blob fallback handlers
+- per-file handler registry with TypeScript, Go, Rust, structured text, tree-sitter, and blob fallback handlers
 - Go import for conservative `.go` subsets: files, structs, fields, interfaces, top-level functions, receiver methods, package-level const/var/type declarations, and `calls` references resolved through `go/types`
 - Go rendering through the helper's `go/format` path and validation through `go build ./...`
+- Rust import for conservative `.rs` subsets: files, structs, enums, traits, fields, variants, top-level functions, impl methods, trait methods, const/static/type declarations, raw fallback items, and conservative `calls` references
+- Rust rendering through `prettyplease` and validation through `cargo check`
 - clean TypeScript slice rendering backed by stored branch/base-position/root-symbol provenance
 - clean Go slice rendering without identity comments
+- clean Rust slice rendering without identity comments
 - graph-anchored slice apply for method additions/updates/deletes, top-level function additions/updates/deletes, and new TypeScript files in rendered slices
 - graph-anchored Go slice apply for conservative function/method body updates/additions/deletes, receiver-method additions, struct fields, interface method signatures, package-level values, and call-reference updates
+- graph-anchored Rust slice apply for conservative function/method body updates/additions/deletes, type/field/variant/trait-method/package-value additions and deletions, and call-reference updates
 - stale stored-slice apply with operation-level conflict detection before append
 - `SliceRecoveryAttachment` provenance for stored-slice applies
 - deterministic rejection of ambiguous structural identity recovery instead of in-text anchors
 - legacy two-file slice diff for comment-bearing projections
 - operation-level merge with deterministic `SAFE_MERGE` or `CONFLICT`
-- language toolchain validation after merge and during `validate` (`tsc` for TypeScript, `go build` for Go)
+- language toolchain validation after merge and during `validate` (`tsc` for TypeScript, `go build` for Go, `cargo check` for Rust)
 - persistent graph/render cache keyed by branch operation count and operation-id fingerprint
 - queries: find symbol, references, callers, callees, dependencies, dependents
 - React/Vite visual demo for many agent branches and semantic merge review
-- deterministic simulation command/API for many TypeScript or Go agent branches, final replay/render checks, and compiler validation
+- deterministic simulation command/API for many TypeScript, Go, or Rust agent branches, final replay/render checks, and compiler validation
 - unit tests, a property-style merge commutativity test, a 512-agent in-memory simulation test, and importer round-trip coverage
 
 ## Still Incomplete
@@ -35,9 +39,12 @@ bonhomme currently implements a runnable v1 prototype, not a complete production
 - Full TypeScript AST and type-checker-backed semantic model
 - General import fidelity for every TypeScript construct
 - General import fidelity for every Go construct
+- General import fidelity for every Rust construct
 - Go generics, embedding, build tags, cgo, `init`, package-level documentation, and `implements` edges
+- Rust macros, modules, visibility edge cases, generics/where-clause reconstruction beyond the conservative renderer, attributes/docs, trait-resolution-backed call edges, and Cargo-workspace-aware validation
 - Semantic diff for class edits, file deletes, reference updates, properties, interfaces, enums, decorators, and namespaces
 - Cross-package Go repositories and package-aware rendering beyond the current conservative package/file model
+- Cross-crate Rust repositories and crate/module-aware rendering beyond the current conservative file model
 - Arbitrary branch DAG merge support beyond the current direct branch-to-target workflow
 - Broader randomized simulation suite across destructive edits, deletes, updates, and non-method symbols
 - Rich semantic review UI beyond the demo panels

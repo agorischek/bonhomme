@@ -9,6 +9,7 @@ repository.workspace = true
 bonhomme-core.workspace = true
 bonhomme-ts.workspace = true
 bonhomme-go.workspace = true
+bonhomme-rust.workspace = true
 bonhomme-fallback.workspace = true
 bonhomme-engine.workspace = true
 anyhow.workspace = true

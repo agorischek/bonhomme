@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(name = "bonhomme")]
-#[command(about = "Semantic source control prototype for TypeScript")]
+#[command(about = "Semantic source control prototype for TypeScript, Go, and Rust")]
 struct Cli {
     #[arg(long, env = "DATABASE_URL", global = true, default_value = DEFAULT_DATABASE_URL)]
     database_url: String,
@@ -129,7 +129,7 @@ struct SliceApplyArgs {
     repo: String,
     #[arg(long, default_value = "main")]
     branch: String,
-    #[arg(long, default_value = "Apply edited TypeScript slice")]
+    #[arg(long, default_value = "Apply edited semantic slice")]
     title: String,
     #[arg(long, default_value = "agent")]
     agent: String,
