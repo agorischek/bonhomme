@@ -680,7 +680,8 @@ fn block_body(block: &syn::Block) -> String {
 
 fn struct_declaration(item: &ItemStruct) -> String {
     format!(
-        "{} struct {} {}",
+        "{} {} struct {} {}",
+        attrs_text(&item.attrs),
         tokens(&item.vis),
         item.ident,
         tokens(&item.generics)
@@ -691,7 +692,8 @@ fn struct_declaration(item: &ItemStruct) -> String {
 
 fn enum_declaration(item: &ItemEnum) -> String {
     format!(
-        "{} enum {} {}",
+        "{} {} enum {} {}",
+        attrs_text(&item.attrs),
         tokens(&item.vis),
         item.ident,
         tokens(&item.generics)
@@ -702,7 +704,8 @@ fn enum_declaration(item: &ItemEnum) -> String {
 
 fn trait_declaration(item: &ItemTrait) -> String {
     format!(
-        "{} trait {} {}",
+        "{} {} trait {} {}",
+        attrs_text(&item.attrs),
         tokens(&item.vis),
         item.ident,
         tokens(&item.generics)

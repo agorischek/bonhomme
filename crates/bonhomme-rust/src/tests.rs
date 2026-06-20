@@ -30,6 +30,32 @@ fn import_renders_impl_methods_as_type_children() {
     assert!(rendered[0].content.contains("pub fn format_order"));
 }
 
+#[test]
+fn type_level_attributes_round_trip() {
+    // Regression: `#[derive]`/`#[serde]` on a struct or enum were dropped on import, so the render
+    // came back missing them (which would not compile and would change the serde wire format).
+    let source = "\
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = \"type\", rename_all = \"camelCase\")]
+pub enum Shape {
+    Circle { radius: f64 },
+    Square { side: f64 },
+}
+";
+    let content = render_files(&import_graph(source))[0].content.clone();
+
+    assert!(
+        content.contains("#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]"),
+        "derive attribute dropped: {content}"
+    );
+    assert!(content.contains("#[serde("), "serde attribute dropped: {content}");
+    assert!(content.contains("tag = \"type\""), "serde args dropped: {content}");
+    assert!(
+        content.contains("rename_all = \"camelCase\""),
+        "serde args dropped: {content}"
+    );
+}
+
 #[tokio::test]
 async fn imported_rust_round_trips_and_builds() {
     let graph = import_graph(sample_source());
