@@ -11,8 +11,9 @@ bonhomme currently implements a runnable v1 prototype, not a complete production
 - deterministic graph replay from operation records
 - validation for duplicate IDs, dangling parents, dangling references, and duplicate sibling symbols
 - TypeScript import for conservative `.ts` subsets: files, classes, methods, properties, top-level functions, and call references
-- TypeScript slice rendering with hidden symbol metadata in comments
-- slice apply for method additions/updates/deletes, top-level function additions/updates/deletes, and new TypeScript files in rendered slices
+- clean TypeScript slice rendering backed by stored branch/base-position/root-symbol provenance
+- graph-anchored slice apply for method additions/updates/deletes, top-level function additions/updates/deletes, and new TypeScript files in rendered slices
+- legacy two-file slice diff for comment-bearing projections
 - operation-level merge with deterministic `SAFE_MERGE` or `CONFLICT`
 - TypeScript compiler validation after merge and during `validate`
 - persistent graph/render cache keyed by branch operation count and operation-id fingerprint

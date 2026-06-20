@@ -183,7 +183,8 @@ bonhomme is not trying to replace the TypeScript compiler, editor, package manag
 
 The system still renders TypeScript files because existing tooling expects files.
 
-A rendered file may include hidden metadata comments:
+A full rendered file may include hidden metadata comments for compatibility with
+the legacy two-file diff path:
 
 ```ts
 export class OrderService /* bonhomme:symbol=6343... */ {
@@ -193,7 +194,10 @@ export class OrderService /* bonhomme:symbol=6343... */ {
 }
 ```
 
-Those comments preserve identity across text editing without affecting TypeScript compilation.
+Those comments do not affect TypeScript compilation. Stored slices no longer
+depend on them: `slice create` records the base graph position and scope, renders
+clean TypeScript, and `slice apply --slice-id` asks the language plugin to
+recover identity from the graph-backed slice provenance.
 
 This is the compatibility bridge:
 
@@ -281,7 +285,8 @@ The current bonhomme prototype implements the core shape of the system:
 - Immutable semantic operations
 - Deterministic graph replay
 - Graph validation
-- TypeScript rendering with hidden symbol metadata
+- TypeScript full rendering with hidden symbol metadata for legacy compatibility
+- Clean TypeScript slice rendering backed by stored provenance
 - Conservative TypeScript import for common constructs
 - Legacy slice diff for method edits, top-level function edits, deletes, and new files
 - Stored slice provenance for branch, base position, and root symbols

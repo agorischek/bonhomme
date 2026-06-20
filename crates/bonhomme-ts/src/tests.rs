@@ -1,4 +1,5 @@
 mod recover;
+mod render;
 
 use crate::{diff_slice, import_typescript_files, render_files, validate_typescript_files};
 use bonhomme_core::{
@@ -18,54 +19,6 @@ fn record(position: i64, operation: Operation) -> OperationRecord {
         operation,
         created_at: Utc.timestamp_opt(0, 0).unwrap(),
     }
-}
-
-#[test]
-fn render_is_deterministic() {
-    let file = Uuid::new_v4();
-    let class = Uuid::new_v4();
-    let method = Uuid::new_v4();
-    let records = vec![
-        record(
-            1,
-            Operation::CreateSymbol {
-                symbol_id: file,
-                parent_id: None,
-                kind: "file".to_string(),
-                name: "OrderService.ts".to_string(),
-                body: None,
-                metadata: json!({"path": "src/OrderService.ts"}),
-            },
-        ),
-        record(
-            2,
-            Operation::CreateSymbol {
-                symbol_id: class,
-                parent_id: Some(file),
-                kind: "class".to_string(),
-                name: "OrderService".to_string(),
-                body: None,
-                metadata: json!({"exported": true}),
-            },
-        ),
-        record(
-            3,
-            Operation::CreateSymbol {
-                symbol_id: method,
-                parent_id: Some(class),
-                kind: "method".to_string(),
-                name: "displayName".to_string(),
-                body: Some("return \"OrderService\";".to_string()),
-                metadata: json!({"signature": "displayName(): string"}),
-            },
-        ),
-    ];
-    let graph = materialize(&records).unwrap();
-    let first = render_files(&graph);
-    let second = render_files(&graph);
-
-    assert_eq!(first, second);
-    assert!(first[0].content.contains("bonhomme:symbol="));
 }
 
 #[tokio::test]

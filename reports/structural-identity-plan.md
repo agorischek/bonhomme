@@ -1,6 +1,6 @@
 # Plan: Structural Identity Recovery (drop in-text symbol comments)
 
-**Status:** in progress. P0-P2 are implemented; P3 clean rendering is next.
+**Status:** in progress. P0-P3 are implemented; stale-base handling is next.
 **Companion reading:** [core-premise.md](core-premise.md) (why files are projections),
 [related-work.md](related-work.md) (Unison / structured-merge lineage).
 
@@ -41,7 +41,8 @@ annotation.
   `ParsedFile { file_symbol_id, classes: [ParsedClass{ symbol_id, name, methods }],
   functions }`. Identity is *still* read from comments via
   `oxc_parse::find_symbol_id` / `find_file_symbol_id`.
-- `render` still emits the `bonhomme:symbol=` / `bonhomme:file=` comments.
+- Full branch rendering still emits `bonhomme:symbol=` / `bonhomme:file=`
+  comments for the legacy two-file diff path. Stored slice rendering is clean.
 - `diff_slice(original, modified)` is **stateless**: it parses two supplied text
   blobs and matches by id-then-name. The new `ensure_unique_symbol_ids` guard
   rejects a slice that reuses an id.
@@ -172,7 +173,7 @@ Each phase is independently shippable and keeps the suite green.
 - **P2 — provenance.** Implemented. Add the `slices` table + `slice create`/`slice apply
   --slice-id`; engine materializes the base graph and calls the matcher. Old
   `--original/--modified` path stays as legacy.
-- **P3 — clean render.** Stop emitting `bonhomme:symbol=` / `bonhomme:file=`
+- **P3 — clean render.** Implemented. Stop emitting `bonhomme:symbol=` / `bonhomme:file=`
   comments from slice rendering; the matcher now relies purely on structure + base
   snapshot. Keep the header banner (human guidance, not identity).
 - **P4 — stale-base handling.** Route recovered ops through the merge/rebase path
@@ -196,10 +197,10 @@ Each phase is independently shippable and keeps the suite green.
 
 ## What changes / what's removed
 
-- **Removed:** `bonhomme:symbol=` / `bonhomme:file=` in rendered output; the agent
-  obligation to preserve UUIDs; `find_symbol_id` as the *primary* identity source
-  (kept only for the optional anchor). The `ensure_unique_symbol_ids` guard becomes
-  largely moot (no ids in text) but stays for the anchor path.
+- **Removed:** `bonhomme:symbol=` / `bonhomme:file=` from stored slice output;
+  the agent obligation to preserve UUIDs; `find_symbol_id` as the *primary*
+  identity source for stored slices. The legacy two-file diff still reads identity
+  comments, and the duplicate-id guard still protects that path.
 - **Added:** `recover_operations` (structural matcher); slice provenance
   persistence + `slice apply --slice-id`; body-similarity + ambiguity policy;
   matcher-decision audit metadata.

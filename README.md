@@ -96,4 +96,4 @@ bonhomme query find-dependencies --repo imported-ts --branch main --name display
 
 `bonhomme simulate` resets the demo repository, creates deterministic agent branches, merges them in a stable shuffled order, validates replay/render determinism, and runs `tsc` on the final rendered TypeScript.
 
-`bonhomme slice create` persists slice provenance: the branch, operation position, and root symbols used to render the editable projection. `bonhomme slice apply --slice-id` uses that stored base graph to recover semantic operations from the edited slice. The older `--original/--modified` apply path is still available as a legacy two-file diff.
+`bonhomme slice create` persists slice provenance: the branch, operation position, and root symbols used to render the editable projection. The returned slice is clean TypeScript without `bonhomme:symbol` or `bonhomme:file` identity comments. `bonhomme slice apply --slice-id` uses the stored base graph to recover semantic operations from the edited slice. The older `--original/--modified` apply path is still available as a legacy two-file diff.
