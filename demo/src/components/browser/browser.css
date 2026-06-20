@@ -333,6 +333,113 @@
   cursor: default;
 }
 
+/* time-travel scrubber */
+.bh-scrubber {
+  width: 100%;
+  margin: 4px 0 8px;
+  accent-color: var(--bh-accent);
+  cursor: pointer;
+}
+
+/* changeset review */
+.bh-changesets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.bh-cs-card {
+  border: 1px solid var(--bh-border);
+  border-radius: 8px;
+  padding: 12px;
+}
+.bh-cs-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.bh-cs-head strong {
+  font-size: 13px;
+}
+.bh-cs-author {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--bh-muted);
+}
+.bh-cs-task {
+  margin: 2px 0 8px;
+  font-size: 12px;
+}
+.bh-cs-ops {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.bh-cs-op {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.bh-op-tag {
+  color: #fff;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.bh-cs-op-name {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+button.bh-cs-op-name {
+  color: var(--bh-accent);
+  cursor: pointer;
+}
+span.bh-cs-op-name {
+  color: var(--bh-fg);
+}
+
+/* reference graph */
+.bh-graph-layout {
+  grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
+}
+.bh-graph {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.bh-graph-head {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+.bh-graph-svg {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+.bh-graph-empty {
+  padding: 20px;
+}
+.bh-graph-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--bh-muted);
+  margin-top: 6px;
+}
+.bh-graph-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+
 /* states */
 .bh-muted {
   color: var(--bh-muted);

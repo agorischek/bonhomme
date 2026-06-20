@@ -122,3 +122,20 @@ export function branchColor(branchName: string): string {
   const hues = [212, 280, 36, 0, 330, 190, 150]
   return `hsl(${hues[hash % hues.length]} 70% 45%)`
 }
+
+/**
+ * Time-travel: project the graph as it stood after operation `asOf`. A symbol's `ordinal` is its
+ * 1-based position in the application order, so symbols with `ordinal <= asOf` existed then; a
+ * reference is kept only when both its endpoints are visible.
+ */
+export function filterGraphAsOf(state: DemoState, asOf: number): DemoState {
+  const symbols = Object.fromEntries(
+    Object.entries(state.mainGraph.symbols).filter(([, symbol]) => symbol.ordinal <= asOf),
+  )
+  const references = Object.fromEntries(
+    Object.entries(state.mainGraph.references).filter(
+      ([, ref]) => symbols[ref.fromSymbolId] && symbols[ref.toSymbolId],
+    ),
+  )
+  return { ...state, mainGraph: { ...state.mainGraph, symbols, references } }
+}
