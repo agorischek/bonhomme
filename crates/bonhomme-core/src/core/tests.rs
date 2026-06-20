@@ -500,3 +500,165 @@ fn move_symbol_rejects_cycle_and_missing_target() {
         "moving a missing symbol must be rejected"
     );
 }
+
+#[test]
+fn detect_moves_collapses_delete_create_into_move() {
+    let file_a = stable_uuid("fa");
+    let file_b = stable_uuid("fb");
+    let foo = stable_uuid("foo");
+    let caller = stable_uuid("caller");
+    let base = materialize(&[
+        record(
+            1,
+            Operation::CreateSymbol {
+                symbol_id: file_a,
+                parent_id: None,
+                kind: "file".to_string(),
+                name: "a.ts".to_string(),
+                body: None,
+                metadata: json!({}),
+            },
+        ),
+        record(
+            2,
+            Operation::CreateSymbol {
+                symbol_id: file_b,
+                parent_id: None,
+                kind: "file".to_string(),
+                name: "b.ts".to_string(),
+                body: None,
+                metadata: json!({}),
+            },
+        ),
+        record(
+            3,
+            Operation::CreateSymbol {
+                symbol_id: foo,
+                parent_id: Some(file_a),
+                kind: "function".to_string(),
+                name: "foo".to_string(),
+                body: Some("return 1;".to_string()),
+                metadata: json!({}),
+            },
+        ),
+        record(
+            4,
+            Operation::CreateSymbol {
+                symbol_id: caller,
+                parent_id: Some(file_b),
+                kind: "function".to_string(),
+                name: "caller".to_string(),
+                body: Some("return foo();".to_string()),
+                metadata: json!({}),
+            },
+        ),
+    ])
+    .unwrap();
+
+    // A structural recover for "foo moved from a.ts to b.ts" emits delete-here + create-there
+    // (with a fresh id), plus a reference into the new symbol.
+    let new_foo = stable_uuid("foo-new");
+    let reference = stable_uuid("ref");
+    let recovered = vec![
+        Operation::DeleteSymbol { symbol_id: foo },
+        Operation::CreateSymbol {
+            symbol_id: new_foo,
+            parent_id: Some(file_b),
+            kind: "function".to_string(),
+            name: "foo".to_string(),
+            body: Some("return 1;".to_string()),
+            metadata: json!({}),
+        },
+        Operation::CreateReference {
+            reference_id: reference,
+            from_symbol_id: caller,
+            to_symbol_id: new_foo,
+            kind: "calls".to_string(),
+        },
+    ];
+
+    let collapsed = detect_moves(recovered, &base);
+
+    // The delete+create became a single MoveSymbol that keeps foo's id...
+    let moves: Vec<_> = collapsed
+        .iter()
+        .filter(|op| matches!(op, Operation::MoveSymbol { .. }))
+        .collect();
+    assert_eq!(moves.len(), 1);
+    assert!(matches!(
+        moves[0],
+        Operation::MoveSymbol { symbol_id, new_parent_id: Some(parent) }
+            if *symbol_id == foo && *parent == file_b
+    ));
+    assert!(
+        !collapsed
+            .iter()
+            .any(|op| matches!(op, Operation::DeleteSymbol { .. })),
+        "the delete should be collapsed away"
+    );
+    // ...and the reference was remapped onto the preserved id, not the discarded create.
+    assert!(collapsed.iter().any(|op| matches!(
+        op,
+        Operation::CreateReference { to_symbol_id, .. } if *to_symbol_id == foo
+    )));
+
+    // The collapsed ops replay cleanly and preserve foo's identity under its new parent.
+    let mut graph = base.clone();
+    for (ordinal, op) in collapsed.iter().enumerate() {
+        graph
+            .apply_operation(stable_uuid(&format!("apply-{ordinal}")), op)
+            .unwrap();
+    }
+    assert_eq!(graph.symbols[&foo].parent_id, Some(file_b));
+}
+
+#[test]
+fn detect_moves_leaves_in_place_recreate_alone() {
+    let file_a = stable_uuid("fa");
+    let foo = stable_uuid("foo");
+    let base = materialize(&[
+        record(
+            1,
+            Operation::CreateSymbol {
+                symbol_id: file_a,
+                parent_id: None,
+                kind: "file".to_string(),
+                name: "a.ts".to_string(),
+                body: None,
+                metadata: json!({}),
+            },
+        ),
+        record(
+            2,
+            Operation::CreateSymbol {
+                symbol_id: foo,
+                parent_id: Some(file_a),
+                kind: "function".to_string(),
+                name: "foo".to_string(),
+                body: Some("return 1;".to_string()),
+                metadata: json!({}),
+            },
+        ),
+    ])
+    .unwrap();
+
+    // Same parent (not re-parented) → not a move; left untouched.
+    let recovered = vec![
+        Operation::DeleteSymbol { symbol_id: foo },
+        Operation::CreateSymbol {
+            symbol_id: stable_uuid("foo-new"),
+            parent_id: Some(file_a),
+            kind: "function".to_string(),
+            name: "foo".to_string(),
+            body: Some("return 1;".to_string()),
+            metadata: json!({}),
+        },
+    ];
+    let result = detect_moves(recovered, &base);
+    assert_eq!(result.len(), 2);
+    assert!(
+        !result
+            .iter()
+            .any(|op| matches!(op, Operation::MoveSymbol { .. }))
+    );
+}

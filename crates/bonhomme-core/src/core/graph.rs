@@ -243,3 +243,157 @@ pub fn materialize(records: &[OperationRecord]) -> Result<SemanticGraph> {
     graph.validate()?;
     Ok(graph)
 }
+
+/// Collapse delete+create pairs that are really a move into an identity-preserving [`Operation::MoveSymbol`].
+///
+/// When edited source moves a symbol to a different container, a structural recover/diff sees the
+/// symbol vanish from its old parent (a `DeleteSymbol`) and an identical one appear under a new
+/// parent (a `CreateSymbol` with a fresh id). This pass pairs such a delete with a create that has
+/// the same kind, name, and body but a *different* parent, and rewrites the pair as a single
+/// `MoveSymbol` that keeps the original id — so identity survives the move. Any later operation that
+/// named the discarded create id (e.g. a reference to the moved symbol) is remapped to the preserved
+/// id.
+///
+/// This is language-agnostic: any plugin's `recover`/`diff` can post-process its output through it.
+/// Conservative by design — it only collapses *leaf* symbols (no children in the base graph or in
+/// the batch), and matches on identical body, so a pure move is detected while a move that also edits
+/// the body is left as delete+create. A moved container with its own children is a later refinement.
+pub fn detect_moves(operations: Vec<Operation>, base: &SemanticGraph) -> Vec<Operation> {
+    let base_parents: BTreeSet<Uuid> = base
+        .symbols
+        .values()
+        .filter_map(|symbol| symbol.parent_id)
+        .collect();
+    let batch_parents: BTreeSet<Uuid> = operations
+        .iter()
+        .filter_map(|op| match op {
+            Operation::CreateSymbol { parent_id, .. } => *parent_id,
+            _ => None,
+        })
+        .collect();
+
+    let mut remap: BTreeMap<Uuid, Uuid> = BTreeMap::new();
+    let mut move_at: BTreeMap<usize, (Uuid, Option<Uuid>)> = BTreeMap::new();
+    let mut dropped_deletes: BTreeSet<Uuid> = BTreeSet::new();
+    let mut used_create: BTreeSet<usize> = BTreeSet::new();
+
+    for op in &operations {
+        let Operation::DeleteSymbol { symbol_id } = op else {
+            continue;
+        };
+        // Only collapse leaves whose old shape we can read from the base graph.
+        if base_parents.contains(symbol_id) {
+            continue;
+        }
+        let Some(old) = base.symbols.get(symbol_id) else {
+            continue;
+        };
+
+        let matched = operations.iter().enumerate().find(|(index, candidate)| {
+            if used_create.contains(index) {
+                return false;
+            }
+            let Operation::CreateSymbol {
+                symbol_id: new_id,
+                parent_id,
+                kind,
+                name,
+                body,
+                ..
+            } = candidate
+            else {
+                return false;
+            };
+            !batch_parents.contains(new_id)          // the created symbol is itself a leaf
+                && *parent_id != old.parent_id       // genuinely re-parented
+                && *kind == old.kind
+                && *name == old.name
+                && *body == old.body
+        });
+
+        if let Some((index, Operation::CreateSymbol { symbol_id: new_id, parent_id, .. })) = matched {
+            used_create.insert(index);
+            dropped_deletes.insert(*symbol_id);
+            move_at.insert(index, (*symbol_id, *parent_id));
+            remap.insert(*new_id, *symbol_id);
+        }
+    }
+
+    if move_at.is_empty() {
+        return operations;
+    }
+
+    operations
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, op)| match op {
+            Operation::DeleteSymbol { symbol_id } if dropped_deletes.contains(&symbol_id) => None,
+            Operation::CreateSymbol { .. } if move_at.contains_key(&index) => {
+                let (symbol_id, new_parent_id) = move_at[&index];
+                Some(Operation::MoveSymbol {
+                    symbol_id,
+                    new_parent_id,
+                })
+            }
+            other => Some(remap_operation(other, &remap)),
+        })
+        .collect()
+}
+
+/// Rewrite every symbol id in `op` through `remap` (the discarded create id → the preserved id), so
+/// references and parentage that named a collapsed create now point at the surviving symbol.
+fn remap_operation(op: Operation, remap: &BTreeMap<Uuid, Uuid>) -> Operation {
+    fn mapped(id: Uuid, remap: &BTreeMap<Uuid, Uuid>) -> Uuid {
+        remap.get(&id).copied().unwrap_or(id)
+    }
+    match op {
+        Operation::CreateSymbol {
+            symbol_id,
+            parent_id,
+            kind,
+            name,
+            body,
+            metadata,
+        } => Operation::CreateSymbol {
+            symbol_id: mapped(symbol_id, remap),
+            parent_id: parent_id.map(|id| mapped(id, remap)),
+            kind,
+            name,
+            body,
+            metadata,
+        },
+        Operation::DeleteSymbol { symbol_id } => Operation::DeleteSymbol {
+            symbol_id: mapped(symbol_id, remap),
+        },
+        Operation::UpdateSymbol {
+            symbol_id,
+            name,
+            body,
+            metadata,
+        } => Operation::UpdateSymbol {
+            symbol_id: mapped(symbol_id, remap),
+            name,
+            body,
+            metadata,
+        },
+        Operation::MoveSymbol {
+            symbol_id,
+            new_parent_id,
+        } => Operation::MoveSymbol {
+            symbol_id: mapped(symbol_id, remap),
+            new_parent_id: new_parent_id.map(|id| mapped(id, remap)),
+        },
+        Operation::CreateReference {
+            reference_id,
+            from_symbol_id,
+            to_symbol_id,
+            kind,
+        } => Operation::CreateReference {
+            reference_id,
+            from_symbol_id: mapped(from_symbol_id, remap),
+            to_symbol_id: mapped(to_symbol_id, remap),
+            kind,
+        },
+        Operation::DeleteReference { reference_id } => Operation::DeleteReference { reference_id },
+    }
+}
