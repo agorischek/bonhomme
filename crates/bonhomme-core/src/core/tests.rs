@@ -396,3 +396,107 @@ fn stable_order_key(name: &str) -> u64 {
     }
     hash
 }
+
+#[test]
+fn move_symbol_reparents_preserving_identity() {
+    let file = |id, name: &str| Operation::CreateSymbol {
+        symbol_id: id,
+        parent_id: None,
+        kind: "file".to_string(),
+        name: name.to_string(),
+        body: None,
+        metadata: json!({}),
+    };
+    let file_a = stable_uuid("file-a");
+    let file_b = stable_uuid("file-b");
+    let class = stable_uuid("class-c");
+
+    let graph = materialize(&[
+        record(1, file(file_a, "a.ts")),
+        record(2, file(file_b, "b.ts")),
+        record(
+            3,
+            Operation::CreateSymbol {
+                symbol_id: class,
+                parent_id: Some(file_a),
+                kind: "class".to_string(),
+                name: "C".to_string(),
+                body: None,
+                metadata: json!({}),
+            },
+        ),
+        record(
+            4,
+            Operation::MoveSymbol {
+                symbol_id: class,
+                new_parent_id: Some(file_b),
+            },
+        ),
+    ])
+    .expect("identity-preserving move should replay cleanly");
+
+    let moved = &graph.symbols[&class];
+    assert_eq!(moved.parent_id, Some(file_b), "class now lives under file B");
+    assert_eq!(moved.id, class, "id preserved across the move");
+    assert_eq!(moved.name, "C", "name preserved across the move");
+}
+
+#[test]
+fn move_symbol_rejects_cycle_and_missing_target() {
+    let parent = stable_uuid("p");
+    let child = stable_uuid("c");
+    let base = || {
+        vec![
+            record(
+                1,
+                Operation::CreateSymbol {
+                    symbol_id: parent,
+                    parent_id: None,
+                    kind: "file".to_string(),
+                    name: "p.ts".to_string(),
+                    body: None,
+                    metadata: json!({}),
+                },
+            ),
+            record(
+                2,
+                Operation::CreateSymbol {
+                    symbol_id: child,
+                    parent_id: Some(parent),
+                    kind: "class".to_string(),
+                    name: "C".to_string(),
+                    body: None,
+                    metadata: json!({}),
+                },
+            ),
+        ]
+    };
+
+    // Moving a symbol beneath its own descendant would form a cycle.
+    let mut cyclic = base();
+    cyclic.push(record(
+        3,
+        Operation::MoveSymbol {
+            symbol_id: parent,
+            new_parent_id: Some(child),
+        },
+    ));
+    assert!(
+        materialize(&cyclic).is_err(),
+        "cycle-forming move must be rejected"
+    );
+
+    // Moving a symbol that does not exist.
+    let mut missing = base();
+    missing.push(record(
+        3,
+        Operation::MoveSymbol {
+            symbol_id: stable_uuid("ghost"),
+            new_parent_id: None,
+        },
+    ));
+    assert!(
+        materialize(&missing).is_err(),
+        "moving a missing symbol must be rejected"
+    );
+}

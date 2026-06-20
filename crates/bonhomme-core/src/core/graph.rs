@@ -105,6 +105,43 @@ impl SemanticGraph {
                     symbol.metadata = metadata.clone();
                 }
             }
+            Operation::MoveSymbol {
+                symbol_id,
+                new_parent_id,
+            } => {
+                let moved = self
+                    .symbols
+                    .get(symbol_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("cannot move missing symbol {symbol_id}"))?;
+                if let Some(new_parent_id) = new_parent_id {
+                    if new_parent_id == symbol_id {
+                        bail!("cannot move symbol {symbol_id} into itself");
+                    }
+                    if !self.symbols.contains_key(new_parent_id) {
+                        bail!("new parent symbol {new_parent_id} does not exist");
+                    }
+                    // Walk up from the proposed parent; reaching the moved symbol means the move
+                    // would place it beneath its own descendant — a cycle.
+                    let mut ancestor = Some(*new_parent_id);
+                    while let Some(current) = ancestor {
+                        if current == *symbol_id {
+                            bail!("cannot move symbol {symbol_id} beneath its own descendant");
+                        }
+                        ancestor = self.symbols.get(&current).and_then(|node| node.parent_id);
+                    }
+                }
+                if self.has_symbol_named(*new_parent_id, &moved.kind, &moved.name, Some(*symbol_id))
+                {
+                    bail!(
+                        "duplicate {} symbol named {} under the new parent",
+                        moved.kind,
+                        moved.name
+                    );
+                }
+                let symbol = self.symbols.get_mut(symbol_id).expect("checked above");
+                symbol.parent_id = *new_parent_id;
+            }
             Operation::CreateReference {
                 reference_id,
                 from_symbol_id,

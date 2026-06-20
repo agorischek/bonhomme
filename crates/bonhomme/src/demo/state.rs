@@ -132,6 +132,9 @@ fn operation_view(
         Operation::DeleteSymbol { symbol_id } => {
             (Some(*symbol_id), None, Some("symbol".to_string()))
         }
+        Operation::MoveSymbol { symbol_id, .. } => {
+            (Some(*symbol_id), None, Some("symbol".to_string()))
+        }
         Operation::CreateReference {
             from_symbol_id,
             kind,

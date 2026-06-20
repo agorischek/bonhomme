@@ -542,6 +542,13 @@ fn operation_summary(operation: &Operation) -> String {
             ..
         } => format!("create {kind} {name} ({symbol_id})"),
         Operation::DeleteSymbol { symbol_id } => format!("delete symbol {symbol_id}"),
+        Operation::MoveSymbol {
+            symbol_id,
+            new_parent_id,
+        } => match new_parent_id {
+            Some(parent) => format!("move symbol {symbol_id} to {parent}"),
+            None => format!("move symbol {symbol_id} to top level"),
+        },
         Operation::UpdateSymbol {
             symbol_id,
             name,

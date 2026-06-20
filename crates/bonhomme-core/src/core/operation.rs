@@ -27,6 +27,13 @@ pub enum Operation {
         body: Option<String>,
         metadata: Option<Value>,
     },
+    /// Re-parent a symbol while preserving its identity (id/name/body). This is how an
+    /// identity-preserving *move* is expressed — a class to another file, a method to another class
+    /// — since `UpdateSymbol` cannot change parentage. `new_parent_id` is `None` for top level.
+    MoveSymbol {
+        symbol_id: Uuid,
+        new_parent_id: Option<Uuid>,
+    },
     CreateReference {
         reference_id: Uuid,
         from_symbol_id: Uuid,
@@ -44,6 +51,7 @@ impl Operation {
             Operation::CreateSymbol { .. } => "CreateSymbol",
             Operation::DeleteSymbol { .. } => "DeleteSymbol",
             Operation::UpdateSymbol { .. } => "UpdateSymbol",
+            Operation::MoveSymbol { .. } => "MoveSymbol",
             Operation::CreateReference { .. } => "CreateReference",
             Operation::DeleteReference { .. } => "DeleteReference",
         }
@@ -77,7 +85,8 @@ impl Operation {
         match self {
             Operation::CreateSymbol { symbol_id, .. }
             | Operation::DeleteSymbol { symbol_id }
-            | Operation::UpdateSymbol { symbol_id, .. } => {
+            | Operation::UpdateSymbol { symbol_id, .. }
+            | Operation::MoveSymbol { symbol_id, .. } => {
                 ids.insert(*symbol_id);
             }
             Operation::CreateReference { .. } => {}

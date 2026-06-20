@@ -481,7 +481,8 @@ fn changed_file_paths_since(
         match &record.operation {
             Operation::CreateSymbol { symbol_id, .. }
             | Operation::DeleteSymbol { symbol_id }
-            | Operation::UpdateSymbol { symbol_id, .. } => {
+            | Operation::UpdateSymbol { symbol_id, .. }
+            | Operation::MoveSymbol { symbol_id, .. } => {
                 insert_symbol_paths(base, latest, *symbol_id, &mut paths);
             }
             Operation::CreateReference {

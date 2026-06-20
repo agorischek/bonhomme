@@ -50,6 +50,15 @@ fn operation_decision(operation: &Operation) -> Value {
             "operation": "DeleteSymbol",
             "symbolId": symbol_id
         }),
+        Operation::MoveSymbol {
+            symbol_id,
+            new_parent_id,
+        } => json!({
+            "decision": "movedSymbol",
+            "operation": "MoveSymbol",
+            "symbolId": symbol_id,
+            "newParentId": new_parent_id
+        }),
         Operation::UpdateSymbol {
             symbol_id,
             name,
