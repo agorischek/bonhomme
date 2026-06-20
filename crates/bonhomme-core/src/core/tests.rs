@@ -662,3 +662,170 @@ fn detect_moves_leaves_in_place_recreate_alone() {
             .any(|op| matches!(op, Operation::MoveSymbol { .. }))
     );
 }
+
+#[test]
+fn detect_moves_collapses_nested_subtree_move() {
+    let file = |id, name: &str| Operation::CreateSymbol {
+        symbol_id: id,
+        parent_id: None,
+        kind: "file".to_string(),
+        name: name.to_string(),
+        body: None,
+        metadata: json!({}),
+    };
+    let file_a = stable_uuid("fa");
+    let file_b = stable_uuid("fb");
+    let class = stable_uuid("class");
+    let method = stable_uuid("method");
+    let base = materialize(&[
+        record(1, file(file_a, "a.ts")),
+        record(2, file(file_b, "b.ts")),
+        record(
+            3,
+            Operation::CreateSymbol {
+                symbol_id: class,
+                parent_id: Some(file_a),
+                kind: "class".to_string(),
+                name: "C".to_string(),
+                body: None,
+                metadata: json!({}),
+            },
+        ),
+        record(
+            4,
+            Operation::CreateSymbol {
+                symbol_id: method,
+                parent_id: Some(class),
+                kind: "method".to_string(),
+                name: "m".to_string(),
+                body: Some("return 1;".to_string()),
+                metadata: json!({}),
+            },
+        ),
+    ])
+    .unwrap();
+
+    // Recover for "class C moved a.ts -> b.ts": the whole subtree is deleted and recreated with fresh
+    // ids under b.ts.
+    let new_class = stable_uuid("class-new");
+    let new_method = stable_uuid("method-new");
+    let recovered = vec![
+        Operation::DeleteSymbol { symbol_id: method },
+        Operation::DeleteSymbol { symbol_id: class },
+        Operation::CreateSymbol {
+            symbol_id: new_class,
+            parent_id: Some(file_b),
+            kind: "class".to_string(),
+            name: "C".to_string(),
+            body: None,
+            metadata: json!({}),
+        },
+        Operation::CreateSymbol {
+            symbol_id: new_method,
+            parent_id: Some(new_class),
+            kind: "method".to_string(),
+            name: "m".to_string(),
+            body: Some("return 1;".to_string()),
+            metadata: json!({}),
+        },
+    ];
+
+    let collapsed = detect_moves(recovered, &base);
+
+    // A single MoveSymbol of the class root; the method rides along (no op of its own).
+    let moves: Vec<_> = collapsed
+        .iter()
+        .filter(|op| matches!(op, Operation::MoveSymbol { .. }))
+        .collect();
+    assert_eq!(moves.len(), 1);
+    assert!(matches!(
+        moves[0],
+        Operation::MoveSymbol { symbol_id, new_parent_id: Some(parent) }
+            if *symbol_id == class && *parent == file_b
+    ));
+    assert!(
+        !collapsed.iter().any(|op| matches!(
+            op,
+            Operation::DeleteSymbol { .. } | Operation::CreateSymbol { .. }
+        )),
+        "the whole subtree's delete+create should be collapsed away"
+    );
+
+    // Replays preserving BOTH ids under the relocated class.
+    let mut graph = base.clone();
+    for (ordinal, op) in collapsed.iter().enumerate() {
+        graph
+            .apply_operation(stable_uuid(&format!("apply-{ordinal}")), op)
+            .unwrap();
+    }
+    assert_eq!(graph.symbols[&class].parent_id, Some(file_b));
+    assert_eq!(graph.symbols[&method].parent_id, Some(class));
+    assert!(graph.symbols.contains_key(&method), "method id preserved");
+}
+
+#[test]
+fn detect_moves_handles_move_with_body_edit() {
+    let file = |id, name: &str| Operation::CreateSymbol {
+        symbol_id: id,
+        parent_id: None,
+        kind: "file".to_string(),
+        name: name.to_string(),
+        body: None,
+        metadata: json!({}),
+    };
+    let file_a = stable_uuid("fa");
+    let file_b = stable_uuid("fb");
+    let foo = stable_uuid("foo");
+    let base = materialize(&[
+        record(1, file(file_a, "a.ts")),
+        record(2, file(file_b, "b.ts")),
+        record(
+            3,
+            Operation::CreateSymbol {
+                symbol_id: foo,
+                parent_id: Some(file_a),
+                kind: "function".to_string(),
+                name: "foo".to_string(),
+                body: Some("return 1;".to_string()),
+                metadata: json!({}),
+            },
+        ),
+    ])
+    .unwrap();
+
+    // foo moves to b.ts AND its body changes.
+    let new_foo = stable_uuid("foo-new");
+    let recovered = vec![
+        Operation::DeleteSymbol { symbol_id: foo },
+        Operation::CreateSymbol {
+            symbol_id: new_foo,
+            parent_id: Some(file_b),
+            kind: "function".to_string(),
+            name: "foo".to_string(),
+            body: Some("return 2;".to_string()),
+            metadata: json!({}),
+        },
+    ];
+
+    let collapsed = detect_moves(recovered, &base);
+
+    assert!(collapsed.iter().any(|op| matches!(
+        op,
+        Operation::MoveSymbol { symbol_id, new_parent_id: Some(parent) }
+            if *symbol_id == foo && *parent == file_b
+    )));
+    assert!(collapsed.iter().any(|op| matches!(
+        op,
+        Operation::UpdateSymbol { symbol_id, body: Some(body), .. }
+            if *symbol_id == foo && body == "return 2;"
+    )));
+
+    let mut graph = base.clone();
+    for (ordinal, op) in collapsed.iter().enumerate() {
+        graph
+            .apply_operation(stable_uuid(&format!("apply-{ordinal}")), op)
+            .unwrap();
+    }
+    assert_eq!(graph.symbols[&foo].parent_id, Some(file_b));
+    assert_eq!(graph.symbols[&foo].body.as_deref(), Some("return 2;"));
+}

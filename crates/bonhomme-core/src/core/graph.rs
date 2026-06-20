@@ -244,100 +244,228 @@ pub fn materialize(records: &[OperationRecord]) -> Result<SemanticGraph> {
     Ok(graph)
 }
 
-/// Collapse delete+create pairs that are really a move into an identity-preserving [`Operation::MoveSymbol`].
+/// Collapse delete+create runs that are really a move into identity-preserving
+/// [`Operation::MoveSymbol`] (plus an [`Operation::UpdateSymbol`] when the body or metadata also
+/// changed).
 ///
-/// When edited source moves a symbol to a different container, a structural recover/diff sees the
-/// symbol vanish from its old parent (a `DeleteSymbol`) and an identical one appear under a new
-/// parent (a `CreateSymbol` with a fresh id). This pass pairs such a delete with a create that has
-/// the same kind, name, and body but a *different* parent, and rewrites the pair as a single
-/// `MoveSymbol` that keeps the original id — so identity survives the move. Any later operation that
-/// named the discarded create id (e.g. a reference to the moved symbol) is remapped to the preserved
-/// id.
+/// When edited source relocates a symbol, a structural recover/diff sees its whole subtree vanish
+/// from the old parent (a run of `DeleteSymbol`) and an identical-shaped subtree appear under a new
+/// parent (a run of `CreateSymbol` with fresh ids). This pass finds the moved subtree by matching it
+/// structurally (kind + name, recursively) against the base graph, and rewrites it as a single
+/// `MoveSymbol` of the subtree *root* that keeps the original id — descendants ride along under their
+/// preserved parent, so every id in the subtree survives. Any operation that named a discarded create
+/// id (e.g. a reference to the moved symbol) is remapped onto the preserved id, and a body/metadata
+/// edit made during the move becomes an `UpdateSymbol`.
 ///
-/// This is language-agnostic: any plugin's `recover`/`diff` can post-process its output through it.
-/// Conservative by design — it only collapses *leaf* symbols (no children in the base graph or in
-/// the batch), and matches on identical body, so a pure move is detected while a move that also edits
-/// the body is left as delete+create. A moved container with its own children is a later refinement.
+/// Language-agnostic: any plugin's `recover`/`diff` can post-process its output through it.
+/// Conservative — it only collapses a subtree whose *shape* is unchanged (no children added or
+/// removed during the move); a structural change keeps the safe delete+create form.
 pub fn detect_moves(operations: Vec<Operation>, base: &SemanticGraph) -> Vec<Operation> {
-    let base_parents: BTreeSet<Uuid> = base
-        .symbols
-        .values()
-        .filter_map(|symbol| symbol.parent_id)
-        .collect();
-    let batch_parents: BTreeSet<Uuid> = operations
+    struct Created {
+        parent: Option<Uuid>,
+        kind: String,
+        name: String,
+        body: Option<String>,
+        metadata: serde_json::Value,
+    }
+
+    // Recursive structural match: the subtree under `base_id` is identical in shape and names to the
+    // subtree under `create_id` (bodies may differ — those become updates). Returns the base→create
+    // id bijection for the whole subtree.
+    fn match_subtree(
+        base_id: Uuid,
+        create_id: Uuid,
+        base: &SemanticGraph,
+        base_children: &BTreeMap<Uuid, Vec<Uuid>>,
+        created: &BTreeMap<Uuid, Created>,
+        create_children: &BTreeMap<Uuid, Vec<Uuid>>,
+    ) -> Option<BTreeMap<Uuid, Uuid>> {
+        let base_node = base.symbols.get(&base_id)?;
+        let created_node = created.get(&create_id)?;
+        if base_node.kind != created_node.kind || base_node.name != created_node.name {
+            return None;
+        }
+        let no_children = Vec::new();
+        let base_kids = base_children.get(&base_id).unwrap_or(&no_children);
+        let create_kids = create_children.get(&create_id).unwrap_or(&no_children);
+        if base_kids.len() != create_kids.len() {
+            return None;
+        }
+        let mut create_by_key: BTreeMap<(String, String), Uuid> = BTreeMap::new();
+        for &child in create_kids {
+            let node = &created[&child];
+            if create_by_key
+                .insert((node.kind.clone(), node.name.clone()), child)
+                .is_some()
+            {
+                return None; // ambiguous duplicate sibling name
+            }
+        }
+        let mut bijection = BTreeMap::new();
+        bijection.insert(base_id, create_id);
+        for &child in base_kids {
+            let node = base.symbols.get(&child)?;
+            let create_child = *create_by_key.get(&(node.kind.clone(), node.name.clone()))?;
+            let sub = match_subtree(
+                child,
+                create_child,
+                base,
+                base_children,
+                created,
+                create_children,
+            )?;
+            bijection.extend(sub);
+        }
+        Some(bijection)
+    }
+
+    let deleted: BTreeSet<Uuid> = operations
         .iter()
         .filter_map(|op| match op {
-            Operation::CreateSymbol { parent_id, .. } => *parent_id,
+            Operation::DeleteSymbol { symbol_id } if base.symbols.contains_key(symbol_id) => {
+                Some(*symbol_id)
+            }
             _ => None,
         })
         .collect();
 
-    let mut remap: BTreeMap<Uuid, Uuid> = BTreeMap::new();
-    let mut move_at: BTreeMap<usize, (Uuid, Option<Uuid>)> = BTreeMap::new();
-    let mut dropped_deletes: BTreeSet<Uuid> = BTreeSet::new();
-    let mut used_create: BTreeSet<usize> = BTreeSet::new();
-
+    let mut created: BTreeMap<Uuid, Created> = BTreeMap::new();
+    let mut create_children: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
     for op in &operations {
-        let Operation::DeleteSymbol { symbol_id } = op else {
-            continue;
-        };
-        // Only collapse leaves whose old shape we can read from the base graph.
-        if base_parents.contains(symbol_id) {
-            continue;
-        }
-        let Some(old) = base.symbols.get(symbol_id) else {
-            continue;
-        };
-
-        let matched = operations.iter().enumerate().find(|(index, candidate)| {
-            if used_create.contains(index) {
-                return false;
+        if let Operation::CreateSymbol {
+            symbol_id,
+            parent_id,
+            kind,
+            name,
+            body,
+            metadata,
+        } = op
+        {
+            created.insert(
+                *symbol_id,
+                Created {
+                    parent: *parent_id,
+                    kind: kind.clone(),
+                    name: name.clone(),
+                    body: body.clone(),
+                    metadata: metadata.clone(),
+                },
+            );
+            if let Some(parent) = parent_id {
+                create_children.entry(*parent).or_default().push(*symbol_id);
             }
-            let Operation::CreateSymbol {
-                symbol_id: new_id,
-                parent_id,
-                kind,
-                name,
-                body,
-                ..
-            } = candidate
-            else {
-                return false;
-            };
-            !batch_parents.contains(new_id)          // the created symbol is itself a leaf
-                && *parent_id != old.parent_id       // genuinely re-parented
-                && *kind == old.kind
-                && *name == old.name
-                && *body == old.body
-        });
-
-        if let Some((index, Operation::CreateSymbol { symbol_id: new_id, parent_id, .. })) = matched {
-            used_create.insert(index);
-            dropped_deletes.insert(*symbol_id);
-            move_at.insert(index, (*symbol_id, *parent_id));
-            remap.insert(*new_id, *symbol_id);
+        }
+    }
+    let mut base_children: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
+    for symbol in base.symbols.values() {
+        if let Some(parent) = symbol.parent_id {
+            base_children.entry(parent).or_default().push(symbol.id);
         }
     }
 
-    if move_at.is_empty() {
+    // A moved subtree's root is a deleted symbol whose parent survives (None, or a non-deleted
+    // symbol); a deleted symbol whose parent is also deleted is an interior node of a larger move.
+    let mut roots: Vec<Uuid> = deleted
+        .iter()
+        .copied()
+        .filter(|id| {
+            base.symbols[id]
+                .parent_id
+                .is_none_or(|parent| !deleted.contains(&parent))
+        })
+        .collect();
+    roots.sort_unstable();
+    let mut create_ids: Vec<Uuid> = created.keys().copied().collect();
+    create_ids.sort_unstable();
+
+    let mut consumed_deletes: BTreeSet<Uuid> = BTreeSet::new();
+    let mut consumed_creates: BTreeSet<Uuid> = BTreeSet::new();
+    let mut remap: BTreeMap<Uuid, Uuid> = BTreeMap::new();
+    let mut root_move: BTreeMap<Uuid, (Uuid, Option<Uuid>)> = BTreeMap::new();
+    let mut updates: Vec<(Uuid, Option<String>, Option<serde_json::Value>)> = Vec::new();
+
+    for &root in &roots {
+        if consumed_deletes.contains(&root) {
+            continue;
+        }
+        let base_root = &base.symbols[&root];
+        for &candidate in &create_ids {
+            if consumed_creates.contains(&candidate) {
+                continue;
+            }
+            let created_root = &created[&candidate];
+            if created_root.kind != base_root.kind
+                || created_root.name != base_root.name
+                || created_root.parent == base_root.parent_id
+            {
+                continue; // not a re-parent of a matching symbol
+            }
+            let Some(bijection) = match_subtree(
+                root,
+                candidate,
+                base,
+                &base_children,
+                &created,
+                &create_children,
+            ) else {
+                continue;
+            };
+            // The whole relocated subtree must actually have been deleted — otherwise it is not a
+            // clean move and we leave the operations untouched.
+            if !bijection.keys().all(|id| deleted.contains(id)) {
+                continue;
+            }
+            root_move.insert(candidate, (root, created_root.parent));
+            for (&base_id, &create_id) in &bijection {
+                consumed_deletes.insert(base_id);
+                consumed_creates.insert(create_id);
+                remap.insert(create_id, base_id);
+                let base_node = &base.symbols[&base_id];
+                let create_node = &created[&create_id];
+                let body = (base_node.body != create_node.body)
+                    .then(|| create_node.body.clone())
+                    .flatten();
+                let metadata = (base_node.metadata != create_node.metadata)
+                    .then(|| create_node.metadata.clone());
+                if body.is_some() || metadata.is_some() {
+                    updates.push((base_id, body, metadata));
+                }
+            }
+            break;
+        }
+    }
+
+    if root_move.is_empty() {
         return operations;
     }
 
-    operations
+    let mut result: Vec<Operation> = operations
         .into_iter()
-        .enumerate()
-        .filter_map(|(index, op)| match op {
-            Operation::DeleteSymbol { symbol_id } if dropped_deletes.contains(&symbol_id) => None,
-            Operation::CreateSymbol { .. } if move_at.contains_key(&index) => {
-                let (symbol_id, new_parent_id) = move_at[&index];
-                Some(Operation::MoveSymbol {
-                    symbol_id,
-                    new_parent_id,
-                })
+        .filter_map(|op| match op {
+            Operation::DeleteSymbol { symbol_id } if consumed_deletes.contains(&symbol_id) => None,
+            Operation::CreateSymbol { symbol_id, .. } if consumed_creates.contains(&symbol_id) => {
+                root_move
+                    .get(&symbol_id)
+                    .map(|&(base_id, new_parent_id)| Operation::MoveSymbol {
+                        symbol_id: base_id,
+                        new_parent_id,
+                    })
             }
             other => Some(remap_operation(other, &remap)),
         })
-        .collect()
+        .collect();
+
+    // Body/metadata edits made during the move, applied after it (the symbols already exist).
+    for (symbol_id, body, metadata) in updates {
+        result.push(Operation::UpdateSymbol {
+            symbol_id,
+            name: None,
+            body,
+            metadata,
+        });
+    }
+
+    result
 }
 
 /// Rewrite every symbol id in `op` through `remap` (the discarded create id → the preserved id), so
