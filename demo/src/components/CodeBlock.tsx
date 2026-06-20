@@ -1,5 +1,6 @@
 import hljs from 'highlight.js/lib/core'
 import csharp from 'highlight.js/lib/languages/csharp'
+import elixir from 'highlight.js/lib/languages/elixir'
 import go from 'highlight.js/lib/languages/go'
 import javascript from 'highlight.js/lib/languages/javascript'
 import json from 'highlight.js/lib/languages/json'
@@ -11,6 +12,7 @@ import { useMemo } from 'react'
 import './CodeBlock.css'
 
 hljs.registerLanguage('csharp', csharp)
+hljs.registerLanguage('elixir', elixir)
 hljs.registerLanguage('go', go)
 hljs.registerLanguage('javascript', javascript)
 hljs.registerLanguage('json', json)
@@ -21,6 +23,8 @@ hljs.registerLanguage('typescript', typescript)
 
 const extensionLanguages: Record<string, string> = {
   cs: 'csharp',
+  ex: 'elixir',
+  exs: 'elixir',
   go: 'go',
   js: 'javascript',
   jsx: 'javascript',

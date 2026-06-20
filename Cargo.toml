@@ -6,6 +6,7 @@ members = [
     "crates/bonhomme-rust",
     "crates/bonhomme-python",
     "crates/bonhomme-csharp",
+    "crates/bonhomme-elixir",
     "crates/bonhomme-fallback",
     "crates/bonhomme-engine",
     "crates/bonhomme",
@@ -25,6 +26,7 @@ bonhomme-go = { path = "crates/bonhomme-go" }
 bonhomme-rust = { path = "crates/bonhomme-rust" }
 bonhomme-python = { path = "crates/bonhomme-python" }
 bonhomme-csharp = { path = "crates/bonhomme-csharp" }
+bonhomme-elixir = { path = "crates/bonhomme-elixir" }
 bonhomme-fallback = { path = "crates/bonhomme-fallback" }
 bonhomme-engine = { path = "crates/bonhomme-engine" }
 
@@ -54,6 +56,7 @@ tree-sitter = "0.25"
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-c-sharp = "0.23.5"
+tree-sitter-elixir = "0.3.5"
 syn = { version = "2.0", features = ["full", "visit"] }
 quote = "1.0"
 prettyplease = "0.2"

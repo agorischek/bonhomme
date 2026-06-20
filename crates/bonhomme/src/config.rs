@@ -15,8 +15,9 @@ use std::path::{Path, PathBuf};
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub storage: StorageConfig,
-    /// Per-language toolchain binary paths. `typescript`/`tsc`, `python`/`python3`, and `dotnet`
-    /// are wired at the composition root; other plugins can opt in without changing the schema.
+    /// Per-language toolchain binary paths. `typescript`/`tsc`, `python`/`python3`, `dotnet`, and
+    /// `elixirc`/`elixir` are wired at the composition root; other plugins can opt in without
+    /// changing the schema.
     pub toolchain: BTreeMap<String, String>,
     /// Per-extension formatter commands applied at the write/compare boundary (see `crate::format`).
     /// Keyed by file extension; the command reads content on stdin and writes the formatted result

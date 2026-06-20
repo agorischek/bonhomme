@@ -1,6 +1,6 @@
 # bonhomme
 
-bonhomme is a Rust/Postgres prototype of a semantic source control system for TypeScript/JavaScript, Go, Rust, Python, and C# repositories.
+bonhomme is a Rust/Postgres prototype of a semantic source control system for TypeScript/JavaScript, Go, Rust, Python, C#, and Elixir repositories.
 
 The operation log is authoritative. The semantic graph and rendered source files are reconstructed from immutable operations.
 
@@ -75,6 +75,8 @@ Python support uses tree-sitter in-process for parsing and `python3 -m py_compil
 
 C# support uses tree-sitter in-process for parsing and `dotnet build` for validation. Set `BONHOMME_DOTNET` or `[toolchain].dotnet` if `dotnet` is not on `PATH`.
 
+Elixir support uses tree-sitter in-process for parsing and `elixirc` for validation. Set `BONHOMME_ELIXIRC`, `[toolchain].elixirc`, or `[toolchain].elixir` if `elixirc` is not on `PATH`.
+
 ## Demo walkthrough
 
 The Vite demo is a visual simulation of many coding agents editing the same TypeScript class at once.
@@ -124,6 +126,7 @@ bonhomme import --repo imported-go --path examples/go-basic --reset
 bonhomme import --repo imported-rust --path examples/rust-basic --reset
 bonhomme import --repo imported-python --path examples/python-basic --reset
 bonhomme import --repo imported-csharp --path examples/csharp-basic --reset
+bonhomme import --repo imported-elixir --path examples/elixir-basic --reset
 bonhomme explore --repo imported-ts --branch main --open
 bonhomme session start --repo bonhomme-session --path examples/typescript-basic --reset --no-validate
 bonhomme session review --repo bonhomme-session --open

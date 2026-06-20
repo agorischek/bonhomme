@@ -20,7 +20,7 @@ use uuid::Uuid;
 #[derive(Parser)]
 #[command(name = "bonhomme")]
 #[command(
-    about = "Semantic source control prototype for TypeScript/JavaScript, Go, Rust, Python, and C#"
+    about = "Semantic source control prototype for TypeScript/JavaScript, Go, Rust, Python, C#, and Elixir"
 )]
 struct Cli {
     /// Storage URL. Precedence: this flag > DATABASE_URL env > bonhomme.toml > the project-local

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use bonhomme_core::{BlobHandler, Handler, HandlerRegistry, LanguagePlugin};
 use bonhomme_csharp::CSharpPlugin;
+use bonhomme_elixir::ElixirPlugin;
 use bonhomme_fallback::{
     JsonHandler, MarkdownHandler, TomlHandler, TreeSitterHandler, YamlHandler,
 };
@@ -32,6 +33,7 @@ fn handler_registry(config: &Config) -> HandlerRegistry {
         Arc::new(RustPlugin),
         Arc::new(PythonPlugin::with_interpreter(python_interpreter(config))),
         Arc::new(CSharpPlugin::with_dotnet(dotnet_binary(config))),
+        Arc::new(ElixirPlugin::with_compiler(elixir_compiler(config))),
         Arc::new(JsonHandler),
         Arc::new(MarkdownHandler),
         Arc::new(TomlHandler),
@@ -61,6 +63,14 @@ fn python_interpreter(config: &Config) -> Option<String> {
 
 fn dotnet_binary(config: &Config) -> Option<String> {
     config.toolchain.get("dotnet").cloned()
+}
+
+fn elixir_compiler(config: &Config) -> Option<String> {
+    config
+        .toolchain
+        .get("elixirc")
+        .or_else(|| config.toolchain.get("elixir"))
+        .cloned()
 }
 
 #[cfg(test)]
@@ -117,6 +127,10 @@ mod tests {
                 "src/Service.cs",
                 "class Service {\n    int Answer() {\n        return 42;\n    }\n}\n",
             ),
+            rf(
+                "lib/service.ex",
+                "defmodule Demo.Service do\n  def answer do\n    42\n  end\nend\n",
+            ),
             rf("package.json", "{\"name\":\"demo\"}"),
             rf("README.md", "# Title\n\nsome text\n"),
             rf("Cargo.toml", "[package]\nname = \"demo\"\n"),
@@ -134,6 +148,7 @@ mod tests {
         assert_eq!(breakdown.get("rust"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("python"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("csharp"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("elixir"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("json"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("markdown"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("toml"), Some(&1), "{breakdown:?}");
@@ -150,6 +165,7 @@ mod tests {
         assert_eq!(by_path["Cargo.toml"], "[package]\nname = \"demo\"\n");
         assert_eq!(by_path["util.py"], "def greet():\n    return 1\n");
         assert!(by_path["src/Service.cs"].contains("class Service"));
+        assert!(by_path["lib/service.ex"].contains("defmodule Demo.Service"));
         assert_eq!(by_path["LICENSE"], "MIT, verbatim.\n");
         assert_eq!(
             decode_binary(by_path["logo.png"]).as_deref(),
@@ -212,5 +228,19 @@ mod tests {
         let config = config_with_toolchain("dotnet", "/opt/dotnet");
 
         assert_eq!(dotnet_binary(&config).as_deref(), Some("/opt/dotnet"));
+    }
+
+    #[test]
+    fn elixirc_toolchain_comes_from_config() {
+        let config = config_with_toolchain("elixirc", "/opt/elixirc");
+
+        assert_eq!(elixir_compiler(&config).as_deref(), Some("/opt/elixirc"));
+    }
+
+    #[test]
+    fn elixir_toolchain_key_is_an_alias_for_elixirc() {
+        let config = config_with_toolchain("elixir", "/opt/elixir");
+
+        assert_eq!(elixir_compiler(&config).as_deref(), Some("/opt/elixir"));
     }
 }
