@@ -1,4 +1,4 @@
-use crate::{Attachment, StoredSlice};
+use crate::{Attachment, SourceFileSnapshot, StoredSlice};
 use anyhow::Result;
 use bonhomme_core::{Branch, ChangeSet, OperationRecord, Repository, Task};
 use chrono::{DateTime, Utc};
@@ -145,6 +145,20 @@ pub(crate) struct GraphCacheRow {
     pub(crate) rendered_files: Value,
 }
 
+#[derive(FromRow)]
+pub(crate) struct SourceFileSnapshotRow {
+    repository_id: Uuid,
+    branch_id: Uuid,
+    path: String,
+    content_hash: String,
+    byte_len: i64,
+    handler: String,
+    file_symbol_id: Option<Uuid>,
+    last_import_position: i64,
+    importer_version: String,
+    updated_at: DateTime<Utc>,
+}
+
 impl TryFrom<SliceRow> for StoredSlice {
     type Error = anyhow::Error;
 
@@ -171,6 +185,23 @@ impl From<AttachmentRow> for Attachment {
             attachment_type: row.attachment_type,
             payload: row.payload,
             created_at: row.created_at,
+        }
+    }
+}
+
+impl From<SourceFileSnapshotRow> for SourceFileSnapshot {
+    fn from(row: SourceFileSnapshotRow) -> Self {
+        Self {
+            repository_id: row.repository_id,
+            branch_id: row.branch_id,
+            path: row.path,
+            content_hash: row.content_hash,
+            byte_len: row.byte_len,
+            handler: row.handler,
+            file_symbol_id: row.file_symbol_id,
+            last_import_position: row.last_import_position,
+            importer_version: row.importer_version,
+            updated_at: row.updated_at,
         }
     }
 }

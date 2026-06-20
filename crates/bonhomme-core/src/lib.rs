@@ -7,4 +7,5 @@ pub mod core;
 pub mod lang;
 
 pub use core::*;
+pub use lang::safe_relative_path;
 pub use lang::*;

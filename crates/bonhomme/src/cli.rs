@@ -105,6 +105,7 @@ struct ImportArgs {
     branch: String,
     #[arg(long)]
     path: PathBuf,
+    /// Replace the repository and rebuild every file instead of reconciling incrementally.
     #[arg(long, default_value_t = false)]
     reset: bool,
     #[arg(long, default_value_t = false)]

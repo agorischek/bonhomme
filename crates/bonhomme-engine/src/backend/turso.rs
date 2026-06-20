@@ -10,7 +10,7 @@ use turso::{Builder, Connection, Database, Row, Value as TursoValue, params};
 use uuid::Uuid;
 
 use super::{PendingOperation, StorageBackend};
-use crate::{Attachment, StoredSlice};
+use crate::{Attachment, PendingSourceFileSnapshot, SourceFileSnapshot, StoredSlice};
 
 const SCHEMA: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS repositories (
@@ -71,6 +71,19 @@ const SCHEMA: &[&str] = &[
         rendered_files TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )",
+    "CREATE TABLE IF NOT EXISTS source_file_snapshots (
+        repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+        branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+        path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        byte_len INTEGER NOT NULL,
+        handler TEXT NOT NULL,
+        file_symbol_id TEXT,
+        last_import_position INTEGER NOT NULL,
+        importer_version TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (branch_id, path)
+    )",
     "CREATE TABLE IF NOT EXISTS slices (
         id TEXT PRIMARY KEY,
         repository_id TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
@@ -81,6 +94,7 @@ const SCHEMA: &[&str] = &[
     )",
     "CREATE INDEX IF NOT EXISTS idx_operations_branch_position ON operations(branch_id, position)",
     "CREATE INDEX IF NOT EXISTS idx_operations_repository ON operations(repository_id)",
+    "CREATE INDEX IF NOT EXISTS idx_source_file_snapshots_repository ON source_file_snapshots(repository_id)",
 ];
 
 pub(crate) struct TursoBackend {
@@ -112,6 +126,72 @@ impl TursoBackend {
         let _ = conn.execute("PRAGMA foreign_keys = ON", ()).await;
         Ok(conn)
     }
+
+    async fn append_operations_transactional(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        expected_current_position: Option<i64>,
+        operations: Vec<PendingOperation>,
+    ) -> Result<Vec<OperationRecord>> {
+        if operations.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.conn().await?;
+        conn.execute("BEGIN IMMEDIATE", ()).await?;
+        let result = async {
+            let mut rows = conn
+                .query(
+                    "SELECT COALESCE(MAX(position), 0) FROM operations WHERE branch_id = ?1",
+                    params![branch_id.to_string()],
+                )
+                .await?;
+            let current_position = int(&one(&mut rows).await?, 0)?;
+            if let Some(expected) = expected_current_position
+                && current_position != expected
+            {
+                bail!(
+                    "branch {branch_id} advanced from position {expected} to {current_position}; retry merge"
+                );
+            }
+
+            let mut appended = Vec::with_capacity(operations.len());
+            for (next_position, pending) in (current_position + 1..).zip(operations) {
+                let mut rows = conn
+                    .query(
+                        "INSERT INTO operations (id, repository_id, branch_id, changeset_id, position, op_type, payload)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                         RETURNING id, repository_id, branch_id, changeset_id, position, op_type, payload, created_at",
+                        params![
+                            Uuid::new_v4().to_string(),
+                            repository_id.to_string(),
+                            branch_id.to_string(),
+                            changeset_id.to_string(),
+                            next_position,
+                            pending.op_type,
+                            serde_json::to_string(&pending.payload)?
+                        ],
+                    )
+                    .await?;
+                appended.push(operation(&one(&mut rows).await?)?);
+            }
+            Ok(appended)
+        }
+        .await;
+
+        match result {
+            Ok(appended) => {
+                conn.execute("COMMIT", ()).await?;
+                Ok(appended)
+            }
+            Err(error) => {
+                let _ = conn.execute("ROLLBACK", ()).await;
+                Err(error)
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -139,6 +219,7 @@ impl StorageBackend for TursoBackend {
         };
         for table in [
             "graph_cache",
+            "source_file_snapshots",
             "slices",
             "attachments",
             "operations",
@@ -392,41 +473,32 @@ impl StorageBackend for TursoBackend {
         changeset_id: Uuid,
         operations: Vec<PendingOperation>,
     ) -> Result<Vec<OperationRecord>> {
-        if operations.is_empty() {
-            return Ok(Vec::new());
-        }
+        self.append_operations_transactional(
+            repository_id,
+            branch_id,
+            changeset_id,
+            None,
+            operations,
+        )
+        .await
+    }
 
-        let conn = self.conn().await?;
-        let mut rows = conn
-            .query(
-                "SELECT COALESCE(MAX(position), 0) + 1 FROM operations WHERE branch_id = ?1",
-                params![branch_id.to_string()],
-            )
-            .await?;
-        let mut next_position = int(&one(&mut rows).await?, 0)?;
-        let mut appended = Vec::with_capacity(operations.len());
-
-        for pending in operations {
-            let mut rows = conn
-                .query(
-                "INSERT INTO operations (id, repository_id, branch_id, changeset_id, position, op_type, payload)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 RETURNING id, repository_id, branch_id, changeset_id, position, op_type, payload, created_at",
-                params![
-                    Uuid::new_v4().to_string(),
-                    repository_id.to_string(),
-                    branch_id.to_string(),
-                    changeset_id.to_string(),
-                    next_position,
-                    pending.op_type,
-                    serde_json::to_string(&pending.payload)?
-                ],
-            )
-            .await?;
-            appended.push(operation(&one(&mut rows).await?)?);
-            next_position += 1;
-        }
-        Ok(appended)
+    async fn append_operations_if_branch_position(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        expected_current_position: i64,
+        operations: Vec<PendingOperation>,
+    ) -> Result<Vec<OperationRecord>> {
+        self.append_operations_transactional(
+            repository_id,
+            branch_id,
+            changeset_id,
+            Some(expected_current_position),
+            operations,
+        )
+        .await
     }
 
     async fn list_operations(&self, repository_id: Uuid) -> Result<Vec<OperationRecord>> {
@@ -585,6 +657,56 @@ impl StorageBackend for TursoBackend {
         .await?;
         Ok(())
     }
+
+    async fn list_source_file_snapshots(&self, branch_id: Uuid) -> Result<Vec<SourceFileSnapshot>> {
+        let conn = self.conn().await?;
+        let mut rows = conn
+            .query(
+                "SELECT repository_id, branch_id, path, content_hash, byte_len, handler,
+                        file_symbol_id, last_import_position, importer_version, updated_at
+                 FROM source_file_snapshots
+                 WHERE branch_id = ?1
+                 ORDER BY path",
+                params![branch_id.to_string()],
+            )
+            .await?;
+        collect(&mut rows, source_file_snapshot).await
+    }
+
+    async fn replace_source_file_snapshots(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        snapshots: Vec<PendingSourceFileSnapshot>,
+    ) -> Result<()> {
+        let conn = self.conn().await?;
+        conn.execute(
+            "DELETE FROM source_file_snapshots WHERE branch_id = ?1",
+            params![branch_id.to_string()],
+        )
+        .await?;
+        for snapshot in snapshots {
+            conn.execute(
+                "INSERT INTO source_file_snapshots
+                    (repository_id, branch_id, path, content_hash, byte_len, handler,
+                     file_symbol_id, last_import_position, importer_version)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    repository_id.to_string(),
+                    branch_id.to_string(),
+                    snapshot.path,
+                    snapshot.content_hash,
+                    snapshot.byte_len,
+                    snapshot.handler,
+                    snapshot.file_symbol_id.map(|id| id.to_string()),
+                    snapshot.last_import_position,
+                    snapshot.importer_version
+                ],
+            )
+            .await?;
+        }
+        Ok(())
+    }
 }
 
 // ---- row mapping ----
@@ -723,5 +845,20 @@ fn slice(row: &Row) -> Result<StoredSlice> {
         base_position: int(row, 3)?,
         root_symbols: serde_json::from_value(json(row, 4)?)?,
         created_at: timestamp(row, 5)?,
+    })
+}
+
+fn source_file_snapshot(row: &Row) -> Result<SourceFileSnapshot> {
+    Ok(SourceFileSnapshot {
+        repository_id: uuid(row, 0)?,
+        branch_id: uuid(row, 1)?,
+        path: text(row, 2)?,
+        content_hash: text(row, 3)?,
+        byte_len: int(row, 4)?,
+        handler: text(row, 5)?,
+        file_symbol_id: uuid_opt(row, 6)?,
+        last_import_position: int(row, 7)?,
+        importer_version: text(row, 8)?,
+        updated_at: timestamp(row, 9)?,
     })
 }

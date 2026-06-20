@@ -436,7 +436,11 @@ fn move_symbol_reparents_preserving_identity() {
     .expect("identity-preserving move should replay cleanly");
 
     let moved = &graph.symbols[&class];
-    assert_eq!(moved.parent_id, Some(file_b), "class now lives under file B");
+    assert_eq!(
+        moved.parent_id,
+        Some(file_b),
+        "class now lives under file B"
+    );
     assert_eq!(moved.id, class, "id preserved across the move");
     assert_eq!(moved.name, "C", "name preserved across the move");
 }

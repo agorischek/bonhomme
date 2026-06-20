@@ -1,6 +1,6 @@
 use crate::model::{ParseRequest, ParsedPackage};
 use anyhow::{Context, Result, bail};
-use bonhomme_core::RenderedFile;
+use bonhomme_core::{RenderedFile, safe_relative_path};
 use std::{
     io::Write,
     path::{Path, PathBuf},
@@ -37,7 +37,7 @@ pub(crate) async fn validate_go_files(files: &[RenderedFile]) -> Result<()> {
     .await?;
 
     for file in files {
-        let path = root.join(&file.path);
+        let path = root.join(safe_relative_path(&file.path)?);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }

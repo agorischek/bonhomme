@@ -14,7 +14,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 pub(crate) use self::postgres::PostgresBackend;
-use crate::{Attachment, StoredSlice};
+use crate::{Attachment, PendingSourceFileSnapshot, SourceFileSnapshot, StoredSlice};
 // `self::` disambiguates the child module from the extern `turso` crate.
 pub(crate) use self::turso::TursoBackend;
 
@@ -92,6 +92,14 @@ pub(crate) trait StorageBackend: Send + Sync {
         }
         Ok(appended)
     }
+    async fn append_operations_if_branch_position(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        expected_current_position: i64,
+        operations: Vec<PendingOperation>,
+    ) -> Result<Vec<OperationRecord>>;
     async fn list_operations(&self, repository_id: Uuid) -> Result<Vec<OperationRecord>>;
     async fn list_own_operations(
         &self,
@@ -132,6 +140,14 @@ pub(crate) trait StorageBackend: Send + Sync {
         fingerprint: &str,
         graph: Value,
         rendered_files: Value,
+    ) -> Result<()>;
+
+    async fn list_source_file_snapshots(&self, branch_id: Uuid) -> Result<Vec<SourceFileSnapshot>>;
+    async fn replace_source_file_snapshots(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        snapshots: Vec<PendingSourceFileSnapshot>,
     ) -> Result<()>;
 }
 

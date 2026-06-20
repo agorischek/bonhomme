@@ -39,6 +39,7 @@ struct ExplorerQuery {
     symbol: Option<Uuid>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn serve(
     storage: Storage,
     root: PathBuf,

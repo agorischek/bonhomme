@@ -58,3 +58,30 @@ pub struct StoredSlice {
     pub root_symbols: Vec<Uuid>,
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceFileSnapshot {
+    pub repository_id: Uuid,
+    pub branch_id: Uuid,
+    pub path: String,
+    pub content_hash: String,
+    pub byte_len: i64,
+    pub handler: String,
+    pub file_symbol_id: Option<Uuid>,
+    pub last_import_position: i64,
+    pub importer_version: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingSourceFileSnapshot {
+    pub path: String,
+    pub content_hash: String,
+    pub byte_len: i64,
+    pub handler: String,
+    pub file_symbol_id: Option<Uuid>,
+    pub last_import_position: i64,
+    pub importer_version: String,
+}

@@ -48,8 +48,14 @@ pub enum Shape {
         content.contains("#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]"),
         "derive attribute dropped: {content}"
     );
-    assert!(content.contains("#[serde("), "serde attribute dropped: {content}");
-    assert!(content.contains("tag = \"type\""), "serde args dropped: {content}");
+    assert!(
+        content.contains("#[serde("),
+        "serde attribute dropped: {content}"
+    );
+    assert!(
+        content.contains("tag = \"type\""),
+        "serde args dropped: {content}"
+    );
     assert!(
         content.contains("rename_all = \"camelCase\""),
         "serde args dropped: {content}"

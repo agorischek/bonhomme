@@ -16,7 +16,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use backend::StorageBackend;
-pub use models::{Attachment, CacheStatus, MaterializedBranch, MergeResult, StoredSlice};
+pub use models::{
+    Attachment, CacheStatus, MaterializedBranch, MergeResult, PendingSourceFileSnapshot,
+    SourceFileSnapshot, StoredSlice,
+};
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://bonhomme:bonhomme@localhost:54329/bonhomme";
 
@@ -161,6 +164,35 @@ impl Storage {
             .await
     }
 
+    pub async fn append_operations_if_branch_position(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        expected_current_position: i64,
+        operations: Vec<Operation>,
+    ) -> Result<Vec<OperationRecord>> {
+        let operations = operations
+            .into_iter()
+            .map(|operation| {
+                let op_type = operation.op_type().to_string();
+                Ok(backend::PendingOperation {
+                    op_type,
+                    payload: serde_json::to_value(operation)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.backend
+            .append_operations_if_branch_position(
+                repository_id,
+                branch_id,
+                changeset_id,
+                expected_current_position,
+                operations,
+            )
+            .await
+    }
+
     pub async fn list_changesets(&self, repository_id: Uuid) -> Result<Vec<ChangeSet>> {
         self.backend.list_changesets(repository_id).await
     }
@@ -262,6 +294,24 @@ impl Storage {
                 attachment_type,
                 payload,
             )
+            .await
+    }
+
+    pub async fn list_source_file_snapshots(
+        &self,
+        branch_id: Uuid,
+    ) -> Result<Vec<SourceFileSnapshot>> {
+        self.backend.list_source_file_snapshots(branch_id).await
+    }
+
+    pub async fn replace_source_file_snapshots(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        snapshots: Vec<PendingSourceFileSnapshot>,
+    ) -> Result<()> {
+        self.backend
+            .replace_source_file_snapshots(repository_id, branch_id, snapshots)
             .await
     }
 }

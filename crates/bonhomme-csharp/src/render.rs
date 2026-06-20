@@ -90,7 +90,7 @@ fn render_type(graph: &SemanticGraph, symbol: &SymbolNode, indent: usize, out: &
         .unwrap_or_else(|| format!("{} {}", symbol.kind, symbol.name));
     write_indent(indent, out);
     out.push_str(signature.trim());
-    out.push_str("\n");
+    out.push('\n');
     write_indent(indent, out);
     out.push_str("{\n");
 
@@ -139,7 +139,7 @@ fn render_callable(symbol: &SymbolNode, indent: usize, out: &mut String) {
             out.push_str(";\n");
         }
         (_, Some(body)) => {
-            out.push_str("\n");
+            out.push('\n');
             write_indent(indent, out);
             out.push_str("{\n");
             render_body_text(body, indent + 4, out);

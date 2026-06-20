@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use bonhomme_core::RenderedFile;
+use bonhomme_core::{RenderedFile, safe_relative_path};
 use std::path::Path;
 use tokio::{fs, process::Command, time};
 use uuid::Uuid;
@@ -22,7 +22,7 @@ pub async fn validate_rust_files(files: &[RenderedFile]) -> Result<()> {
     }
 
     for file in files {
-        let path = root.join(&file.path);
+        let path = root.join(safe_relative_path(&file.path)?);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use bonhomme_core::RenderedFile;
+use bonhomme_core::{RenderedFile, safe_relative_path};
 use serde_json::json;
 use tokio::{fs, process::Command, time};
 use uuid::Uuid;
@@ -17,7 +17,7 @@ pub async fn validate_typescript_files_with_compiler(
     fs::create_dir_all(&src_root).await?;
 
     for file in files {
-        let path = src_root.join(&file.path);
+        let path = src_root.join(safe_relative_path(&file.path)?);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }

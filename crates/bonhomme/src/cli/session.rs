@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result, bail};
 use bonhomme_core::{
     LanguagePlugin, Operation, OperationRecord, RenderedFile, SemanticGraph, SymbolNode,
-    decode_binary, metadata_string,
+    decode_binary, metadata_string, safe_relative_path,
 };
 use bonhomme_engine::Storage;
 use serde::{Deserialize, Serialize};
@@ -236,6 +236,7 @@ fn handler_breakdown(graph: &SemanticGraph) -> BTreeMap<String, usize> {
     counts
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn start_session(
     config: &Config,
     root: &Path,
@@ -379,7 +380,7 @@ async fn write_land_manifest(dest: &Path, paths: &BTreeSet<String>) -> Result<()
 }
 
 async fn write_rendered_file(dest: &Path, file: &RenderedFile) -> Result<()> {
-    let path = dest.join(&file.path);
+    let path = dest.join(safe_relative_path(&file.path)?);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }
@@ -404,7 +405,7 @@ async fn land_tree(files: &[RenderedFile], dest: &Path) -> Result<LandStats> {
 
     let mut deleted = 0;
     for orphan in prior.difference(&current) {
-        let path = dest.join(orphan);
+        let path = dest.join(safe_relative_path(orphan)?);
         if fs::remove_file(&path).await.is_ok() {
             deleted += 1;
             prune_empty_parents(dest, &path).await;
@@ -450,7 +451,7 @@ async fn land_changed_files(
             continue;
         }
 
-        let disk_path = dest.join(path);
+        let disk_path = dest.join(safe_relative_path(path)?);
         if fs::remove_file(&disk_path).await.is_ok() {
             deleted += 1;
             prune_empty_parents(dest, &disk_path).await;

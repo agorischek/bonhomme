@@ -74,6 +74,10 @@ impl Storage {
             .collect_branch_operations(target.id, Some(source.base_position))
             .await?;
         let target_operations = self.collect_branch_operations(target.id, None).await?;
+        let expected_target_own_position = target_operations
+            .iter()
+            .filter(|operation| operation.branch_id == target.id)
+            .count() as i64;
         let target_since_base = target_operations
             .iter()
             .skip(target_base_operations.len())
@@ -121,18 +125,18 @@ impl Storage {
             )
             .await?;
 
-        let mut appended = Vec::new();
-        for source_operation in source_operations {
-            appended.push(
-                self.append_operation(
-                    repository.id,
-                    target.id,
-                    changeset.id,
-                    source_operation.operation,
-                )
-                .await?,
-            );
-        }
+        let appended = self
+            .append_operations_if_branch_position(
+                repository.id,
+                target.id,
+                changeset.id,
+                expected_target_own_position,
+                source_operations
+                    .iter()
+                    .map(|operation| operation.operation.clone())
+                    .collect(),
+            )
+            .await?;
 
         let updated_operations = self.collect_branch_operations(target.id, None).await?;
         let graph = materialize(&updated_operations)?;

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use bonhomme_core::RenderedFile;
+use bonhomme_core::{RenderedFile, safe_relative_path};
 use tokio::{fs, process::Command, time};
 use uuid::Uuid;
 
@@ -20,7 +20,7 @@ pub async fn validate_python_files_with_interpreter(
 
     let mut paths = Vec::new();
     for file in files {
-        let path = root.join(&file.path);
+        let path = root.join(safe_relative_path(&file.path)?);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).await?;
         }

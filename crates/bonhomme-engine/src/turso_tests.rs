@@ -12,7 +12,7 @@ use bonhomme_core::{
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::{CacheStatus, Storage};
+use crate::{CacheStatus, PendingSourceFileSnapshot, Storage};
 
 /// A do-nothing language plugin: materialization only needs `render`, and these tests don't touch
 /// import/diff/validate.
@@ -125,6 +125,37 @@ async fn append_allocates_sequential_positions() {
         own[0].operation,
         Operation::CreateSymbol { ref name, .. } if name == "alpha"
     ));
+
+    let rejected = storage
+        .append_operations_if_branch_position(
+            repo.id,
+            main.id,
+            changeset.id,
+            3,
+            vec![create_symbol("epsilon")],
+        )
+        .await;
+    assert!(rejected.is_err());
+    assert_eq!(
+        storage
+            .list_own_operations(main.id, None)
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+
+    let checked = storage
+        .append_operations_if_branch_position(
+            repo.id,
+            main.id,
+            changeset.id,
+            4,
+            vec![create_symbol("epsilon")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(checked[0].position, 5);
 }
 
 #[tokio::test]
@@ -236,6 +267,65 @@ async fn slices_and_attachments_round_trip_json() {
         .unwrap();
     assert_eq!(attachment.payload["count"], 3);
     assert_eq!(attachment.payload["labels"][1], "b");
+}
+
+#[tokio::test]
+async fn source_file_snapshots_replace_and_reset_with_repository() {
+    let storage = memory_storage().await;
+    let (repo, main) = storage.init_repository("demo").await.unwrap();
+    let file_symbol_id = Uuid::new_v4();
+
+    storage
+        .replace_source_file_snapshots(
+            repo.id,
+            main.id,
+            vec![PendingSourceFileSnapshot {
+                path: "src/lib.ts".to_string(),
+                content_hash: "sha256:a".to_string(),
+                byte_len: 12,
+                handler: "typescript".to_string(),
+                file_symbol_id: Some(file_symbol_id),
+                last_import_position: 4,
+                importer_version: "test-v1".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+    let snapshots = storage.list_source_file_snapshots(main.id).await.unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].path, "src/lib.ts");
+    assert_eq!(snapshots[0].file_symbol_id, Some(file_symbol_id));
+
+    storage
+        .replace_source_file_snapshots(
+            repo.id,
+            main.id,
+            vec![PendingSourceFileSnapshot {
+                path: "src/main.ts".to_string(),
+                content_hash: "sha256:b".to_string(),
+                byte_len: 20,
+                handler: "typescript".to_string(),
+                file_symbol_id: None,
+                last_import_position: 5,
+                importer_version: "test-v2".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+    let snapshots = storage.list_source_file_snapshots(main.id).await.unwrap();
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].path, "src/main.ts");
+    assert_eq!(snapshots[0].file_symbol_id, None);
+    assert_eq!(snapshots[0].importer_version, "test-v2");
+
+    let (_, fresh_main) = storage.reset_repository("demo").await.unwrap();
+    assert!(
+        storage
+            .list_source_file_snapshots(fresh_main.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

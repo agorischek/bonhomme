@@ -314,10 +314,8 @@ fn non_method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Resu
             "const" | "static" | "type" | "raw" => {
                 operations.push(value_operation(file_id, file, declaration));
             }
-            "impl" => {
-                if unique_type_id(indexes, declaration.impl_type.as_deref()).is_none() {
-                    operations.extend(impl_operations(file_id, file, declaration, indexes)?);
-                }
+            "impl" if unique_type_id(indexes, declaration.impl_type.as_deref()).is_none() => {
+                operations.extend(impl_operations(file_id, file, declaration, indexes)?);
             }
             _ => {}
         }

@@ -7,9 +7,13 @@ pub use blob::BlobHandler;
 pub use registry::{Handler, HandlerRegistry, read_source_files};
 
 use crate::core::{Operation, SemanticGraph};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-use std::{future::Future, path::Path, pin::Pin};
+use std::{
+    future::Future,
+    path::{Component, Path, PathBuf},
+    pin::Pin,
+};
 use uuid::Uuid;
 
 /// A rendered source file: a path and its textual content. This is the compatibility bridge
@@ -20,6 +24,43 @@ use uuid::Uuid;
 pub struct RenderedFile {
     pub path: String,
     pub content: String,
+}
+
+/// Convert a rendered source path into a filesystem-relative path after rejecting traversal and
+/// platform-specific absolute forms. `RenderedFile.path` is serialized, stored, and sometimes read
+/// from user-edited JSON, so disk writers and validators must not join it directly onto an output
+/// root.
+pub fn safe_relative_path(path: &str) -> Result<PathBuf> {
+    if path.is_empty() {
+        bail!("rendered file path must not be empty");
+    }
+    if path.contains('\\') {
+        bail!("rendered file path must use forward slashes: {path}");
+    }
+
+    let mut safe = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(part) => {
+                let part = part.to_string_lossy();
+                if part.is_empty() || part == "." || part == ".." || part.ends_with(':') {
+                    bail!("rendered file path contains an unsafe component: {path}");
+                }
+                safe.push(part.as_ref());
+            }
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
+                bail!("rendered file path must be relative and normalized: {path}");
+            }
+        }
+    }
+
+    if safe.as_os_str().is_empty() {
+        bail!("rendered file path must not be empty");
+    }
+    Ok(safe)
 }
 
 /// An editable projection of part of the repository handed to an agent. The agent edits the
@@ -77,4 +118,32 @@ pub trait LanguagePlugin: Send + Sync {
     /// Validate rendered files with the language toolchain (for TypeScript, the compiler). Acts as
     /// an external validator for the rendered projection after replay and merge.
     fn validate<'a>(&'a self, files: &'a [RenderedFile]) -> ValidateFuture<'a>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_relative_path;
+
+    #[test]
+    fn safe_relative_path_accepts_normal_repo_paths() {
+        assert_eq!(
+            safe_relative_path("src/components/App.tsx").unwrap(),
+            std::path::PathBuf::from("src/components/App.tsx")
+        );
+    }
+
+    #[test]
+    fn safe_relative_path_rejects_escape_paths() {
+        for path in [
+            "",
+            ".",
+            "/tmp/out.ts",
+            "../out.ts",
+            "src/../../out.ts",
+            "src\\out.ts",
+            "C:/repo/out.ts",
+        ] {
+            assert!(safe_relative_path(path).is_err(), "{path} should fail");
+        }
+    }
 }

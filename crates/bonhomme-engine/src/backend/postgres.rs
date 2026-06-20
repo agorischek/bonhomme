@@ -1,5 +1,5 @@
 //! Postgres backend (sqlx). The original engine SQL, moved verbatim behind `StorageBackend`.
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use bonhomme_core::{Branch, ChangeSet, OperationRecord, Repository, Task};
 use serde_json::Value;
 use sqlx::{PgPool, postgres::PgPoolOptions};
@@ -7,10 +7,10 @@ use uuid::Uuid;
 
 use super::{PendingOperation, StorageBackend};
 use crate::{
-    Attachment, StoredSlice,
+    Attachment, PendingSourceFileSnapshot, SourceFileSnapshot, StoredSlice,
     rows::{
         AttachmentRow, BranchRow, ChangeSetRow, GraphCacheRow, OperationRow, RepositoryRow,
-        SliceRow, TaskRow,
+        SliceRow, SourceFileSnapshotRow, TaskRow,
     },
 };
 
@@ -26,6 +26,61 @@ impl PostgresBackend {
             .await
             .with_context(|| format!("failed to connect to Postgres at {database_url}"))?;
         Ok(Self { pool })
+    }
+
+    async fn append_operations_locked(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        expected_current_position: Option<i64>,
+        operations: Vec<PendingOperation>,
+    ) -> Result<Vec<OperationRecord>> {
+        if operations.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)")
+            .bind(branch_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let current_position: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(position), 0) FROM operations WHERE branch_id = $1",
+        )
+        .bind(branch_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if let Some(expected) = expected_current_position
+            && current_position != expected
+        {
+            bail!(
+                "branch {branch_id} advanced from position {expected} to {current_position}; retry merge"
+            );
+        }
+
+        let mut appended = Vec::with_capacity(operations.len());
+        for (next_position, operation) in (current_position + 1..).zip(operations) {
+            let row = sqlx::query_as::<_, OperationRow>(
+                r#"
+                INSERT INTO operations (id, repository_id, branch_id, changeset_id, position, op_type, payload)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING id, repository_id, branch_id, changeset_id, position, op_type, payload, created_at
+                "#,
+            )
+            .bind(Uuid::new_v4())
+            .bind(repository_id)
+            .bind(branch_id)
+            .bind(changeset_id)
+            .bind(next_position)
+            .bind(operation.op_type)
+            .bind(operation.payload)
+            .fetch_one(&mut *tx)
+            .await?;
+            appended.push(row.try_into()?);
+        }
+        tx.commit().await?;
+        Ok(appended)
     }
 }
 
@@ -282,45 +337,26 @@ impl StorageBackend for PostgresBackend {
         changeset_id: Uuid,
         operations: Vec<PendingOperation>,
     ) -> Result<Vec<OperationRecord>> {
-        if operations.is_empty() {
-            return Ok(Vec::new());
-        }
+        self.append_operations_locked(repository_id, branch_id, changeset_id, None, operations)
+            .await
+    }
 
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::bigint)")
-            .bind(branch_id.to_string())
-            .execute(&mut *tx)
-            .await?;
-        let mut next_position: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(position), 0) + 1 FROM operations WHERE branch_id = $1",
+    async fn append_operations_if_branch_position(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        changeset_id: Uuid,
+        expected_current_position: i64,
+        operations: Vec<PendingOperation>,
+    ) -> Result<Vec<OperationRecord>> {
+        self.append_operations_locked(
+            repository_id,
+            branch_id,
+            changeset_id,
+            Some(expected_current_position),
+            operations,
         )
-        .bind(branch_id)
-        .fetch_one(&mut *tx)
-        .await?;
-
-        let mut appended = Vec::with_capacity(operations.len());
-        for operation in operations {
-            let row = sqlx::query_as::<_, OperationRow>(
-                r#"
-                INSERT INTO operations (id, repository_id, branch_id, changeset_id, position, op_type, payload)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                RETURNING id, repository_id, branch_id, changeset_id, position, op_type, payload, created_at
-                "#,
-            )
-            .bind(Uuid::new_v4())
-            .bind(repository_id)
-            .bind(branch_id)
-            .bind(changeset_id)
-            .bind(next_position)
-            .bind(operation.op_type)
-            .bind(operation.payload)
-            .fetch_one(&mut *tx)
-            .await?;
-            appended.push(row.try_into()?);
-            next_position += 1;
-        }
-        tx.commit().await?;
-        Ok(appended)
+        .await
     }
 
     async fn list_operations(&self, repository_id: Uuid) -> Result<Vec<OperationRecord>> {
@@ -479,6 +515,58 @@ impl StorageBackend for PostgresBackend {
         .bind(rendered_files)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    async fn list_source_file_snapshots(&self, branch_id: Uuid) -> Result<Vec<SourceFileSnapshot>> {
+        let rows = sqlx::query_as::<_, SourceFileSnapshotRow>(
+            r#"
+            SELECT repository_id, branch_id, path, content_hash, byte_len, handler,
+                   file_symbol_id, last_import_position, importer_version, updated_at
+            FROM source_file_snapshots
+            WHERE branch_id = $1
+            ORDER BY path
+            "#,
+        )
+        .bind(branch_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn replace_source_file_snapshots(
+        &self,
+        repository_id: Uuid,
+        branch_id: Uuid,
+        snapshots: Vec<PendingSourceFileSnapshot>,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM source_file_snapshots WHERE branch_id = $1")
+            .bind(branch_id)
+            .execute(&mut *tx)
+            .await?;
+        for snapshot in snapshots {
+            sqlx::query(
+                r#"
+                INSERT INTO source_file_snapshots
+                    (repository_id, branch_id, path, content_hash, byte_len, handler,
+                     file_symbol_id, last_import_position, importer_version)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                "#,
+            )
+            .bind(repository_id)
+            .bind(branch_id)
+            .bind(snapshot.path)
+            .bind(snapshot.content_hash)
+            .bind(snapshot.byte_len)
+            .bind(snapshot.handler)
+            .bind(snapshot.file_symbol_id)
+            .bind(snapshot.last_import_position)
+            .bind(snapshot.importer_version)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 }
