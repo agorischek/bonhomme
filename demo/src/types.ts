@@ -30,6 +30,25 @@ export interface SymbolNode {
   kind: string
   name: string
   ordinal: number
+  body?: string | null
+  metadata?: Record<string, unknown>
+}
+
+export interface Task {
+  id: string
+  repositoryId: string
+  title: string
+  createdAt: string
+}
+
+export interface ChangeSet {
+  id: string
+  repositoryId: string
+  taskId: string
+  branchId: string
+  title: string
+  createdBy: string
+  createdAt: string
 }
 
 export interface ReferenceNode {
@@ -64,6 +83,8 @@ export interface DemoState {
   repository: { id: string; name: string }
   mainBranch: { id: string; name: string }
   branches: BranchSummary[]
+  tasks: Task[]
+  changesets: ChangeSet[]
   operations: OperationView[]
   mainGraph: SemanticGraph
   renderedFiles: RenderedFile[]

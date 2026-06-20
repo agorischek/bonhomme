@@ -2,6 +2,7 @@ import { AlertTriangle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, wait } from './api'
 import { AgentEditors } from './components/AgentEditors'
+import { Browser } from './components/browser/Browser'
 import { Logs } from './components/Logs'
 import { MetricsStrip } from './components/MetricsStrip'
 import { Toolbar } from './components/Toolbar'
@@ -28,6 +29,7 @@ function graphRoots(state: DemoState | null): SymbolNode[] {
 }
 
 function App() {
+  const [view, setView] = useState<'workbench' | 'browse'>('workbench')
   const [state, setState] = useState<DemoState | null>(null)
   const [agentCount, setAgentCount] = useState(36)
   const [includeConflicts, setIncludeConflicts] = useState(false)
@@ -171,6 +173,35 @@ function App() {
 
   return (
     <div className="app-shell">
+      <nav
+        className="view-tabs"
+        style={{ display: 'flex', gap: 4, padding: '6px 16px', borderBottom: '1px solid #d1d9e0' }}
+      >
+        {(['workbench', 'browse'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            onClick={() => setView(mode)}
+            aria-pressed={view === mode}
+            style={{
+              padding: '6px 14px',
+              border: 'none',
+              background: 'none',
+              cursor: 'pointer',
+              fontSize: 14,
+              fontWeight: view === mode ? 600 : 400,
+              color: view === mode ? '#0969da' : '#59636e',
+              borderBottom: view === mode ? '2px solid #0969da' : '2px solid transparent',
+            }}
+          >
+            {mode === 'workbench' ? 'Workbench' : 'Browse'}
+          </button>
+        ))}
+      </nav>
+      {view === 'browse' ? (
+        <Browser />
+      ) : (
+        <>
       <Toolbar
         agentCount={agentCount}
         includeConflicts={includeConflicts}
@@ -215,6 +246,8 @@ function App() {
           simulationResult={simulationResult}
         />
       </main>
+        </>
+      )}
     </div>
   )
 }
