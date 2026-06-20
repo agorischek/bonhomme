@@ -1,10 +1,8 @@
-mod diff;
+mod ids;
 mod import;
-mod oxc_parse;
-mod parse;
+mod model;
 mod recover;
 mod render;
-mod scanner;
 mod source;
 mod validate;
 
@@ -18,41 +16,36 @@ use bonhomme_core::{
 use std::path::Path;
 use uuid::Uuid;
 
-pub use diff::diff_slice;
-pub use import::import_typescript_files;
-pub use parse::{ParsedClass, ParsedFile, ParsedFunction, ParsedMethod, parse_file};
-pub use recover::recover_operations;
+pub use import::import_python_files;
+pub use recover::recover_python_operations;
 pub use render::{render_files, render_slice};
-pub use source::read_typescript_tree;
-pub use validate::{validate_typescript_files, validate_typescript_files_with_compiler};
+pub use source::read_python_tree;
+pub use validate::validate_python_files;
 
-/// The TypeScript implementation of [`LanguagePlugin`]. The optional compiler path is used only for
-/// validation; render/import/diff stay in this crate so `core` and `storage` never depend on
-/// TypeScript directly.
 #[derive(Clone, Debug, Default)]
-pub struct TypeScriptPlugin {
-    compiler: Option<String>,
+pub struct PythonPlugin {
+    interpreter: Option<String>,
 }
 
-impl TypeScriptPlugin {
-    pub fn with_compiler(compiler: impl Into<Option<String>>) -> Self {
+impl PythonPlugin {
+    pub fn with_interpreter(interpreter: impl Into<Option<String>>) -> Self {
         Self {
-            compiler: compiler.into(),
+            interpreter: interpreter.into(),
         }
     }
 }
 
-impl Handler for TypeScriptPlugin {
+impl Handler for PythonPlugin {
     fn name(&self) -> &str {
-        "typescript"
+        "python"
     }
 
     fn claims(&self, file: &RenderedFile) -> bool {
-        source::is_typescript_source(file)
+        source::is_python_source(file)
     }
 }
 
-impl LanguagePlugin for TypeScriptPlugin {
+impl LanguagePlugin for PythonPlugin {
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }
@@ -67,11 +60,16 @@ impl LanguagePlugin for TypeScriptPlugin {
     }
 
     fn import(&self, files: &[RenderedFile]) -> Result<Vec<Operation>> {
-        import_typescript_files(files)
+        import_python_files(files)
     }
 
     fn diff(&self, original: &[RenderedFile], modified: &[RenderedFile]) -> Result<Vec<Operation>> {
-        diff_slice(original, modified)
+        let operations = import_python_files(original)?;
+        let mut base = SemanticGraph::default();
+        for operation in operations {
+            base.apply_operation(Uuid::new_v4(), &operation)?;
+        }
+        recover_python_operations(&base, &[], modified)
     }
 
     fn recover_operations(
@@ -80,17 +78,17 @@ impl LanguagePlugin for TypeScriptPlugin {
         scope: &[Uuid],
         edited: &[RenderedFile],
     ) -> Result<Vec<Operation>> {
-        recover_operations(base, scope, edited)
+        recover_python_operations(base, scope, edited)
     }
 
     fn read_source_tree(&self, root: &Path) -> Result<Vec<RenderedFile>> {
-        read_typescript_tree(root)
+        read_python_tree(root)
     }
 
     fn validate<'a>(&'a self, files: &'a [RenderedFile]) -> ValidateFuture<'a> {
-        Box::pin(validate_typescript_files_with_compiler(
+        Box::pin(validate::validate_python_files_with_interpreter(
             files,
-            self.compiler.as_deref(),
+            self.interpreter.as_deref(),
         ))
     }
 }

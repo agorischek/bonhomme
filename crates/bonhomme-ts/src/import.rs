@@ -8,8 +8,8 @@ use crate::scanner::stable_import_uuid;
 use anyhow::Result;
 use bonhomme_core::{Operation, RenderedFile};
 use oxc_ast::ast::{
-    Class, ClassElement, Declaration, Function, MethodDefinition, PropertyDefinition, PropertyKey,
-    Statement,
+    Class, ClassElement, Declaration, Function, MethodDefinition, MethodDefinitionKind,
+    PropertyDefinition, PropertyKey, Statement,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -51,12 +51,7 @@ pub fn import_typescript_files(files: &[RenderedFile]) -> Result<Vec<Operation>>
             symbol_id: file_id,
             parent_id: None,
             kind: "file".to_string(),
-            name: file
-                .path
-                .rsplit('/')
-                .next()
-                .unwrap_or(file.path.as_str())
-                .to_string(),
+            name: file.path.clone(),
             body: None,
             metadata: json!({
                 "handler": "typescript",
@@ -265,7 +260,8 @@ fn import_method(
 ) -> Option<(Uuid, Operation, Vec<CallTarget>)> {
     let body = method.value.body.as_ref()?;
     let name = property_key_name(&method.key)?;
-    let method_id = stable_import_uuid(&format!("method:{}:{class_id}:{name}", file.path));
+    let symbol_kind = method_symbol_kind(method.kind);
+    let method_id = stable_import_uuid(&format!("{symbol_kind}:{}:{class_id}:{name}", file.path));
     let signature = strip_symbol_comments(&declaration_before_body(
         &file.content,
         method.span.start as usize,
@@ -276,13 +272,24 @@ fn import_method(
         Operation::CreateSymbol {
             symbol_id: method_id,
             parent_id: Some(class_id),
-            kind: "method".to_string(),
+            kind: symbol_kind.to_string(),
             name,
             body: Some(body_text(&file.content, body)),
-            metadata: json!({ "signature": signature }),
+            metadata: json!({
+                "signature": signature,
+                "methodKind": format!("{:?}", method.kind),
+            }),
         },
         collect_function_calls(&method.value),
     ))
+}
+
+fn method_symbol_kind(kind: MethodDefinitionKind) -> &'static str {
+    match kind {
+        MethodDefinitionKind::Get => "getter",
+        MethodDefinitionKind::Set => "setter",
+        _ => "method",
+    }
 }
 
 fn import_property(

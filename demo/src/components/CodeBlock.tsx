@@ -1,21 +1,26 @@
 import hljs from 'highlight.js/lib/core'
+import csharp from 'highlight.js/lib/languages/csharp'
 import go from 'highlight.js/lib/languages/go'
 import javascript from 'highlight.js/lib/languages/javascript'
 import json from 'highlight.js/lib/languages/json'
 import markdown from 'highlight.js/lib/languages/markdown'
+import python from 'highlight.js/lib/languages/python'
 import rust from 'highlight.js/lib/languages/rust'
 import typescript from 'highlight.js/lib/languages/typescript'
 import { useMemo } from 'react'
 import './CodeBlock.css'
 
+hljs.registerLanguage('csharp', csharp)
 hljs.registerLanguage('go', go)
 hljs.registerLanguage('javascript', javascript)
 hljs.registerLanguage('json', json)
 hljs.registerLanguage('markdown', markdown)
+hljs.registerLanguage('python', python)
 hljs.registerLanguage('rust', rust)
 hljs.registerLanguage('typescript', typescript)
 
 const extensionLanguages: Record<string, string> = {
+  cs: 'csharp',
   go: 'go',
   js: 'javascript',
   jsx: 'javascript',
@@ -25,6 +30,8 @@ const extensionLanguages: Record<string, string> = {
   jsonc: 'json',
   md: 'markdown',
   markdown: 'markdown',
+  py: 'python',
+  pyi: 'python',
   rs: 'rust',
   ts: 'typescript',
   tsx: 'typescript',

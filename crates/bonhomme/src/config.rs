@@ -1,7 +1,7 @@
 //! Project configuration — the "config spine". Parsed once here at the composition root and used to
-//! resolve the values the rest of the system already takes by injection (today just the storage
-//! URL). Config is OPTIONAL: with no `bonhomme.toml` present, the defaults reproduce a zero-infra
-//! local setup — an embedded Turso database under `.bonhomme/`, no database server required.
+//! resolve the values the rest of the system already takes by injection. Config is OPTIONAL: with no
+//! `bonhomme.toml` present, the defaults reproduce a zero-infra local setup — an embedded Turso
+//! database under `.bonhomme/`, no database server required.
 //! See `reports/config-plan.md`.
 
 use anyhow::{Context, Result};
@@ -15,14 +15,13 @@ use std::path::{Path, PathBuf};
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub storage: StorageConfig,
-    /// Reserved: per-language toolchain binary paths (e.g. `go = "go"`). Parsed, not yet wired.
-    #[allow(dead_code)]
+    /// Per-language toolchain binary paths. `typescript`/`tsc`, `python`/`python3`, and `dotnet`
+    /// are wired at the composition root; other plugins can opt in without changing the schema.
     pub toolchain: BTreeMap<String, String>,
     /// Reserved: per-language formatter applied at the checkout boundary. Parsed, not yet wired.
     #[allow(dead_code)]
     pub format: BTreeMap<String, String>,
-    /// Reserved: Git integration mode (lands with the coauth-session feature). Parsed, not wired.
-    #[allow(dead_code)]
+    /// Git integration mode — gates write-back into the working tree (`bonhomme session land`).
     pub git: GitConfig,
 }
 
@@ -37,7 +36,6 @@ pub struct StorageConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GitConfig {
-    #[allow(dead_code)]
     pub write_back: bool,
 }
 
@@ -51,15 +49,18 @@ pub fn discover(start: &Path) -> Result<(Config, PathBuf)> {
         if manifest.is_file() {
             let text = std::fs::read_to_string(&manifest)
                 .with_context(|| format!("reading {}", manifest.display()))?;
-            let config = toml::from_str(&text)
-                .with_context(|| format!("parsing {}", manifest.display()))?;
+            let config =
+                toml::from_str(&text).with_context(|| format!("parsing {}", manifest.display()))?;
             return Ok((config, dir.to_path_buf()));
         }
         if git_root.is_none() && dir.join(".git").exists() {
             git_root = Some(dir.to_path_buf());
         }
     }
-    Ok((Config::default(), git_root.unwrap_or_else(|| start.to_path_buf())))
+    Ok((
+        Config::default(),
+        git_root.unwrap_or_else(|| start.to_path_buf()),
+    ))
 }
 
 /// Resolve the storage URL with precedence: CLI flag / `DATABASE_URL` env (collapsed by clap into
@@ -94,7 +95,11 @@ mod tests {
     fn flag_or_env_outranks_file() {
         let config = config_with_url("postgres://from-file");
         assert_eq!(
-            resolve_database_url(Some("postgres://from-flag".into()), &config, Path::new("/repo")),
+            resolve_database_url(
+                Some("postgres://from-flag".into()),
+                &config,
+                Path::new("/repo")
+            ),
             "postgres://from-flag"
         );
     }
@@ -124,6 +129,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_toolchain_section() {
+        let config: Config = toml::from_str("[toolchain]\ntypescript = \"tsgo\"\n").unwrap();
+        assert_eq!(
+            config.toolchain.get("typescript").map(String::as_str),
+            Some("tsgo")
+        );
+    }
+
+    #[test]
     fn rejects_unknown_key() {
         let err = toml::from_str::<Config>("bogus = true\n").unwrap_err();
         assert!(err.to_string().contains("bogus") || err.to_string().contains("unknown"));
@@ -141,7 +155,10 @@ mod tests {
         .unwrap();
 
         let (config, root) = discover(&sub).unwrap();
-        assert_eq!(config.storage.database_url.as_deref(), Some("turso:/custom/db"));
+        assert_eq!(
+            config.storage.database_url.as_deref(),
+            Some("turso:/custom/db")
+        );
         assert_eq!(root, base.join("proj"));
 
         std::fs::remove_dir_all(&base).ok();

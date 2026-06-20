@@ -2,6 +2,8 @@ use anyhow::Result;
 use bonhomme_core::RenderedFile;
 use std::{fs as std_fs, path::Path};
 
+const SUPPORTED_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
+
 pub fn read_typescript_tree(root: &Path) -> Result<Vec<RenderedFile>> {
     let mut files = Vec::new();
     let base = if root.is_file() {
@@ -12,6 +14,10 @@ pub fn read_typescript_tree(root: &Path) -> Result<Vec<RenderedFile>> {
     collect_typescript_files(root, base, &mut files)?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+pub fn is_typescript_source(file: &RenderedFile) -> bool {
+    is_supported_source_path(Path::new(&file.path))
 }
 
 fn collect_typescript_files(path: &Path, base: &Path, files: &mut Vec<RenderedFile>) -> Result<()> {
@@ -28,14 +34,7 @@ fn collect_typescript_files(path: &Path, base: &Path, files: &mut Vec<RenderedFi
         return Ok(());
     }
 
-    if path.extension().and_then(|extension| extension.to_str()) != Some("ts") {
-        return Ok(());
-    }
-    if path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.ends_with(".d.ts"))
-    {
+    if !is_supported_source_path(path) {
         return Ok(());
     }
 
@@ -51,4 +50,18 @@ fn collect_typescript_files(path: &Path, base: &Path, files: &mut Vec<RenderedFi
         content: std_fs::read_to_string(path)?,
     });
     Ok(())
+}
+
+fn is_supported_source_path(path: &Path) -> bool {
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".d.ts"))
+    {
+        return false;
+    }
+
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| SUPPORTED_EXTENSIONS.contains(&extension))
 }

@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
 use bonhomme_core::{BlobHandler, Handler, HandlerRegistry, LanguagePlugin};
+use bonhomme_csharp::CSharpPlugin;
 use bonhomme_fallback::{
     JsonHandler, MarkdownHandler, TomlHandler, TreeSitterHandler, YamlHandler,
 };
 use bonhomme_go::GoPlugin;
+use bonhomme_python::PythonPlugin;
 use bonhomme_rust::RustPlugin;
 use bonhomme_ts::TypeScriptPlugin;
+
+use crate::config::Config;
 
 /// Build the per-file handler router injected into [`bonhomme_engine::Storage`]. This is the one
 /// composition root for languages: the storage/merge engine holds a single `Arc<dyn LanguagePlugin>`
@@ -15,26 +19,48 @@ use bonhomme_ts::TypeScriptPlugin;
 /// Order is priority order — the most specific handlers claim first, and the blob handler is
 /// terminal, claiming everything as the universal floor. New language plugins slot in ahead of the
 /// blob handler.
-pub fn language_registry() -> Arc<dyn LanguagePlugin> {
-    Arc::new(handler_registry())
+pub fn language_registry(config: &Config) -> Arc<dyn LanguagePlugin> {
+    Arc::new(handler_registry(config))
 }
 
 /// The concrete registry behind [`language_registry`]. Kept separate so tests can call
 /// [`HandlerRegistry`] methods (e.g. the handler breakdown) that the `dyn LanguagePlugin` view hides.
-fn handler_registry() -> HandlerRegistry {
+fn handler_registry(config: &Config) -> HandlerRegistry {
     HandlerRegistry::new(vec![
-        Arc::new(TypeScriptPlugin) as Arc<dyn Handler>,
+        Arc::new(TypeScriptPlugin::with_compiler(typescript_compiler(config))) as Arc<dyn Handler>,
         Arc::new(GoPlugin),
         Arc::new(RustPlugin),
+        Arc::new(PythonPlugin::with_interpreter(python_interpreter(config))),
+        Arc::new(CSharpPlugin::with_dotnet(dotnet_binary(config))),
         Arc::new(JsonHandler),
         Arc::new(MarkdownHandler),
         Arc::new(TomlHandler),
         Arc::new(YamlHandler),
-        // Tree-sitter is the broad structural-lite tier (Python, and any future grammar that has
-        // not graduated to a full plugin); it sits just above the terminal blob floor.
+        // Tree-sitter is the broad structural-lite tier for grammars that have not graduated to a
+        // full plugin; it sits just above the terminal blob floor.
         Arc::new(TreeSitterHandler),
         Arc::new(BlobHandler),
     ])
+}
+
+fn typescript_compiler(config: &Config) -> Option<String> {
+    config
+        .toolchain
+        .get("typescript")
+        .or_else(|| config.toolchain.get("tsc"))
+        .cloned()
+}
+
+fn python_interpreter(config: &Config) -> Option<String> {
+    config
+        .toolchain
+        .get("python")
+        .or_else(|| config.toolchain.get("python3"))
+        .cloned()
+}
+
+fn dotnet_binary(config: &Config) -> Option<String> {
+    config.toolchain.get("dotnet").cloned()
 }
 
 #[cfg(test)]
@@ -52,6 +78,12 @@ mod tests {
             path: path.to_string(),
             content: content.to_string(),
         }
+    }
+
+    fn config_with_toolchain(key: &str, value: &str) -> Config {
+        let mut config = Config::default();
+        config.toolchain.insert(key.to_string(), value.to_string());
+        config
     }
 
     fn graph_from(operations: &[Operation]) -> SemanticGraph {
@@ -73,7 +105,7 @@ mod tests {
 
     #[test]
     fn polyglot_repo_routes_renders_and_round_trips_every_tier() {
-        let registry = handler_registry();
+        let registry = handler_registry(&Config::default());
         let binary = encode_binary(&[0xFFu8, 0x00, 0x10, 0xAB]);
         let files = vec![
             rf(
@@ -81,6 +113,10 @@ mod tests {
                 "export function f(): number {\n  return 1;\n}\n",
             ),
             rf("src/lib.rs", "pub fn answer() -> usize {\n    42\n}\n"),
+            rf(
+                "src/Service.cs",
+                "class Service {\n    int Answer() {\n        return 42;\n    }\n}\n",
+            ),
             rf("package.json", "{\"name\":\"demo\"}"),
             rf("README.md", "# Title\n\nsome text\n"),
             rf("Cargo.toml", "[package]\nname = \"demo\"\n"),
@@ -96,10 +132,11 @@ mod tests {
         let breakdown = registry.handler_breakdown(&graph);
         assert_eq!(breakdown.get("typescript"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("rust"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("python"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("csharp"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("json"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("markdown"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("toml"), Some(&1), "{breakdown:?}");
-        assert_eq!(breakdown.get("treesitter"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("blob"), Some(&2), "{breakdown:?}");
 
         // Render the whole graph back through the router; span-preserving tiers are byte-identical
@@ -112,6 +149,7 @@ mod tests {
         assert_eq!(by_path["README.md"], "# Title\n\nsome text\n");
         assert_eq!(by_path["Cargo.toml"], "[package]\nname = \"demo\"\n");
         assert_eq!(by_path["util.py"], "def greet():\n    return 1\n");
+        assert!(by_path["src/Service.cs"].contains("class Service"));
         assert_eq!(by_path["LICENSE"], "MIT, verbatim.\n");
         assert_eq!(
             decode_binary(by_path["logo.png"]).as_deref(),
@@ -121,7 +159,7 @@ mod tests {
 
     #[test]
     fn unparseable_structured_file_degrades_to_blob() {
-        let registry = handler_registry();
+        let registry = handler_registry(&Config::default());
         // A `.json` extension but malformed contents: the JSON handler errors, and the router
         // degrades just this file to the blob floor rather than failing the whole import.
         let operations = registry
@@ -129,5 +167,50 @@ mod tests {
             .expect("import degrades rather than failing");
         let graph = graph_from(&operations);
         assert_eq!(registry.handler_breakdown(&graph).get("blob"), Some(&1));
+    }
+
+    #[test]
+    fn typescript_toolchain_comes_from_config() {
+        let config = config_with_toolchain("typescript", "tsgo");
+
+        assert_eq!(typescript_compiler(&config).as_deref(), Some("tsgo"));
+    }
+
+    #[test]
+    fn tsc_toolchain_key_is_an_alias_for_typescript() {
+        let config = config_with_toolchain("tsc", "custom-tsc");
+
+        assert_eq!(typescript_compiler(&config).as_deref(), Some("custom-tsc"));
+    }
+
+    #[test]
+    fn typescript_toolchain_key_takes_precedence_over_tsc_alias() {
+        let mut config = config_with_toolchain("tsc", "custom-tsc");
+        config
+            .toolchain
+            .insert("typescript".to_string(), "tsgo".to_string());
+
+        assert_eq!(typescript_compiler(&config).as_deref(), Some("tsgo"));
+    }
+
+    #[test]
+    fn python_toolchain_comes_from_config() {
+        let config = config_with_toolchain("python", "/opt/python");
+
+        assert_eq!(python_interpreter(&config).as_deref(), Some("/opt/python"));
+    }
+
+    #[test]
+    fn python3_toolchain_key_is_an_alias_for_python() {
+        let config = config_with_toolchain("python3", "/opt/python3");
+
+        assert_eq!(python_interpreter(&config).as_deref(), Some("/opt/python3"));
+    }
+
+    #[test]
+    fn dotnet_toolchain_comes_from_config() {
+        let config = config_with_toolchain("dotnet", "/opt/dotnet");
+
+        assert_eq!(dotnet_binary(&config).as_deref(), Some("/opt/dotnet"));
     }
 }
