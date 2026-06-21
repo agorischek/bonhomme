@@ -1,10 +1,41 @@
 use anyhow::{Result, bail};
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{FunctionBody, Program};
+use oxc_ast::ast::{Comment, FunctionBody, Program};
 use oxc_parser::Parser;
 use oxc_span::{SourceType, Span};
 use std::path::Path;
 use uuid::Uuid;
+
+/// Leading `/** … */` JSDoc blocks in a source file, used to attach documentation to the symbol it
+/// precedes. Built from oxc's parsed comments, so a `/**` that appears inside a string or template
+/// is never mistaken for a doc comment.
+pub(crate) struct DocComments {
+    blocks: Vec<(usize, usize, String)>,
+}
+
+impl DocComments {
+    pub(crate) fn from_comments(source: &str, comments: &[Comment]) -> Self {
+        let mut blocks: Vec<(usize, usize, String)> = comments
+            .iter()
+            .filter(|comment| comment.is_jsdoc())
+            .map(|comment| {
+                let (start, end) = (comment.span.start as usize, comment.span.end as usize);
+                (start, end, source[start..end].to_string())
+            })
+            .collect();
+        blocks.sort_by_key(|block| block.0);
+        Self { blocks }
+    }
+
+    /// The JSDoc block immediately preceding `symbol_start` (only whitespace between) with its start
+    /// offset and text, or `None` when the symbol has no attached doc.
+    pub(crate) fn leading_for(&self, symbol_start: usize, source: &str) -> Option<(usize, &str)> {
+        self.blocks.iter().rev().find_map(|(start, end, text)| {
+            (*end <= symbol_start && source[*end..symbol_start].trim().is_empty())
+                .then_some((*start, text.as_str()))
+        })
+    }
+}
 
 pub(crate) fn with_program<T>(
     path: &str,

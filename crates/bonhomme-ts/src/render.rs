@@ -123,6 +123,7 @@ fn render_symbol(graph: &SemanticGraph, symbol: &SymbolNode, indent: usize, out:
 }
 
 fn render_class(graph: &SemanticGraph, symbol: &SymbolNode, indent: usize, out: &mut String) {
+    render_doc(symbol, indent, out);
     write_indent(indent, out);
     if let Some(declaration) = metadata_string(&symbol.metadata, "declaration") {
         out.push_str(&declaration);
@@ -152,6 +153,7 @@ fn render_class(graph: &SemanticGraph, symbol: &SymbolNode, indent: usize, out: 
 fn render_method(symbol: &SymbolNode, indent: usize, out: &mut String) {
     let signature = metadata_string(&symbol.metadata, "signature")
         .unwrap_or_else(|| format!("{}(): void", symbol.name));
+    render_doc(symbol, indent, out);
     write_indent(indent, out);
     out.push_str(&signature);
     out.push_str(" {\n");
@@ -163,6 +165,7 @@ fn render_method(symbol: &SymbolNode, indent: usize, out: &mut String) {
 fn render_function(symbol: &SymbolNode, indent: usize, out: &mut String) {
     let signature = metadata_string(&symbol.metadata, "signature")
         .unwrap_or_else(|| format!("{}(): void", symbol.name));
+    render_doc(symbol, indent, out);
     write_indent(indent, out);
     if let Some(declaration) = metadata_string(&symbol.metadata, "declaration") {
         out.push_str(&declaration);
@@ -181,9 +184,29 @@ fn render_function(symbol: &SymbolNode, indent: usize, out: &mut String) {
 fn render_property(symbol: &SymbolNode, indent: usize, out: &mut String) {
     let declaration = metadata_string(&symbol.metadata, "declaration")
         .unwrap_or_else(|| format!("{}: unknown;", symbol.name));
+    render_doc(symbol, indent, out);
     write_indent(indent, out);
     out.push_str(&declaration);
     out.push('\n');
+}
+
+/// Render a symbol's leading `/** … */` doc (stored as `doc` metadata) above its declaration,
+/// re-indented to the symbol's column so nested members read cleanly.
+fn render_doc(symbol: &SymbolNode, indent: usize, out: &mut String) {
+    let Some(doc) = metadata_string(&symbol.metadata, "doc") else {
+        return;
+    };
+    for (index, line) in doc.lines().enumerate() {
+        write_indent(indent, out);
+        if index == 0 {
+            out.push_str(line.trim_start()); // "/**"
+        } else {
+            // Continuation lines (` * …`, ` */`) align their `*` under the opening `/**`.
+            out.push(' ');
+            out.push_str(line.trim_start());
+        }
+        out.push('\n');
+    }
 }
 
 fn render_body(body: &str, indent: usize, out: &mut String) {

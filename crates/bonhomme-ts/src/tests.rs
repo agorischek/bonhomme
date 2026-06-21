@@ -429,6 +429,40 @@ export function formatOrder(id: string): string /* bonhomme:symbol={format_id} *
     validate_with_repo_compiler(&rendered).await;
 }
 
+#[test]
+fn tsdoc_round_trips_on_class_and_members() {
+    // Regression: leading `/** */` docs on a class and its members were dropped on render.
+    let source = "\
+/**
+ * A service.
+ */
+export class Svc {
+  /**
+   * Returns a label.
+   * @param id - the id
+   */
+  label(id: string): string {
+    return id;
+  }
+}
+";
+    let content = render_files(&import_graph(source))[0].content.clone();
+
+    assert!(content.contains("* A service."), "class doc dropped: {content}");
+    assert!(
+        content.contains("* Returns a label."),
+        "method doc dropped: {content}"
+    );
+    assert!(
+        content.contains("@param id - the id"),
+        "method doc tag dropped: {content}"
+    );
+    // The method's doc must render above the method (inside the class), not float into preamble.
+    let method = content.find("label(id").expect("method rendered");
+    let method_doc = content.find("Returns a label").expect("method doc rendered");
+    assert!(method_doc < method, "method doc should render above its method");
+}
+
 fn import_graph(content: &str) -> SemanticGraph {
     materialize_operations(import_operations(content))
 }
