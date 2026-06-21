@@ -1,11 +1,14 @@
 use crate::import::calls::{CallTarget, collect_function_calls};
 use crate::oxc_parse::{
     DocComments, body_text, class_declaration_before_body, declaration_before_body,
-    find_file_symbol_id, find_symbol_id, strip_symbol_comments, with_program,
+    find_file_symbol_id, find_symbol_id, span_text, strip_symbol_comments, with_program,
 };
 use anyhow::Result;
 use bonhomme_core::RenderedFile;
-use oxc_ast::ast::{Class, ClassElement, Declaration, Function, MethodDefinition, Statement};
+use oxc_ast::ast::{
+    Class, ClassElement, Declaration, Function, MethodDefinition, PropertyDefinition, PropertyKey,
+    Statement,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use uuid::Uuid;
@@ -26,10 +29,23 @@ pub struct ParsedMethod {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ParsedProperty {
+    pub symbol_id: Option<Uuid>,
+    pub parent_class_id: Option<Uuid>,
+    pub name: String,
+    pub declaration: String,
+    #[serde(default)]
+    pub doc: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ParsedClass {
     pub symbol_id: Option<Uuid>,
     pub name: String,
     pub methods: Vec<ParsedMethod>,
+    #[serde(default)]
+    pub properties: Vec<ParsedProperty>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -56,7 +72,7 @@ pub struct ParsedFile {
 
 impl ParsedFile {
     /// Every id recovered from this file's identity comments, across the file symbol, classes,
-    /// methods, and top-level functions.
+    /// methods, properties, and top-level functions.
     pub(crate) fn symbol_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
         self.file_symbol_id
             .into_iter()
@@ -66,6 +82,12 @@ impl ParsedFile {
                     .iter()
                     .flat_map(|class| &class.methods)
                     .filter_map(|method| method.symbol_id),
+            )
+            .chain(
+                self.classes
+                    .iter()
+                    .flat_map(|class| &class.properties)
+                    .filter_map(|property| property.symbol_id),
             )
             .chain(
                 self.functions
@@ -165,6 +187,7 @@ fn push_class(
         symbol_id,
         name,
         methods: parse_methods(file, class, symbol_id, docs),
+        properties: parse_properties(file, class, symbol_id, docs),
     });
 }
 
@@ -232,6 +255,54 @@ fn parse_method(
         body: body_text(&file.content, body),
         doc: leading_doc(docs, method.span.start as usize, &file.content),
         calls: collect_function_calls(&method.value),
+    })
+}
+
+fn parse_properties(
+    file: &RenderedFile,
+    class: &Class<'_>,
+    parent_class_id: Option<Uuid>,
+    docs: &DocComments,
+) -> Vec<ParsedProperty> {
+    class
+        .body
+        .body
+        .iter()
+        .filter_map(|element| match element {
+            ClassElement::PropertyDefinition(property) => {
+                parse_property(file, property, parent_class_id, docs)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn parse_property(
+    file: &RenderedFile,
+    property: &PropertyDefinition<'_>,
+    parent_class_id: Option<Uuid>,
+    docs: &DocComments,
+) -> Option<ParsedProperty> {
+    let name = match &property.key {
+        PropertyKey::StaticIdentifier(identifier) => identifier.name.to_string(),
+        PropertyKey::StringLiteral(literal) => literal.value.to_string(),
+        _ => return None,
+    };
+    // Mirror the importer: read any identity comment from the raw span, then strip comments and
+    // normalize the trailing semicolon so an unedited property diffs clean.
+    let raw = span_text(&file.content, property.span);
+    let raw = raw.trim();
+    let symbol_id = find_symbol_id(raw);
+    let mut declaration = strip_symbol_comments(raw);
+    if !declaration.ends_with(';') {
+        declaration.push(';');
+    }
+    Some(ParsedProperty {
+        symbol_id,
+        parent_class_id,
+        name,
+        declaration,
+        doc: leading_doc(docs, property.span.start as usize, &file.content),
     })
 }
 

@@ -1,6 +1,7 @@
 use super::{import_graph, import_operations, materialize_operations, sample_file};
 use crate::{diff_slice, recover_operations, render_files};
 use bonhomme_core::{Operation, RenderedFile};
+use uuid::Uuid;
 
 #[test]
 fn updates_clean_method_body_by_graph_identity() {
@@ -99,6 +100,119 @@ fn body_edit_preserves_existing_doc() {
         "body edit dropped the unchanged doc: {rerendered}"
     );
     assert!(rerendered.contains("console.log"), "{rerendered}");
+}
+
+#[test]
+fn recovers_property_declaration_edit() {
+    let mut operations = import_operations(
+        "export class Counter {\n  count: number = 0;\n  increment(): void {\n    this.count += 1;\n  }\n}\n",
+    );
+    let graph = materialize_operations(operations.clone());
+    let count_id = graph.find_symbol("count")[0].id;
+    let edited = vec![sample_file(
+        "export class Counter {\n  count: string = \"0\";\n  increment(): void {\n    this.count += 1;\n  }\n}\n",
+    )];
+
+    let recovered = recover_operations(&graph, &[], &edited).unwrap();
+    assert!(
+        recovered.iter().any(|operation| matches!(
+            operation,
+            Operation::UpdateSymbol { symbol_id, metadata: Some(metadata), .. }
+                if *symbol_id == count_id
+                    && metadata.get("declaration").and_then(|value| value.as_str())
+                        .is_some_and(|declaration| declaration.contains("string"))
+        )),
+        "property declaration edit was not recovered: {recovered:?}"
+    );
+
+    operations.extend(recovered);
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(rerendered.contains("count: string"), "{rerendered}");
+}
+
+#[test]
+fn recovers_property_doc_edit() {
+    let mut operations = import_operations(
+        "export class Counter {\n  /** Running total. */\n  count: number = 0;\n}\n",
+    );
+    let graph = materialize_operations(operations.clone());
+    let count_id = graph.find_symbol("count")[0].id;
+    let edited = vec![sample_file(
+        "export class Counter {\n  /** The current count. */\n  count: number = 0;\n}\n",
+    )];
+
+    let recovered = recover_operations(&graph, &[], &edited).unwrap();
+    assert!(
+        recovered.iter().any(|operation| matches!(
+            operation,
+            Operation::UpdateSymbol { symbol_id, metadata: Some(metadata), .. }
+                if *symbol_id == count_id
+                    && metadata.get("doc").and_then(|value| value.as_str())
+                        == Some("/** The current count. */")
+        )),
+        "property doc edit was not recovered: {recovered:?}"
+    );
+
+    operations.extend(recovered);
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(rerendered.contains("/** The current count. */"), "{rerendered}");
+    assert!(!rerendered.contains("Running total"), "{rerendered}");
+}
+
+#[test]
+fn recovers_added_property() {
+    let mut operations =
+        import_operations("export class Counter {\n  count: number = 0;\n}\n");
+    let graph = materialize_operations(operations.clone());
+    let edited = vec![sample_file(
+        "export class Counter {\n  count: number = 0;\n  label: string = \"c\";\n}\n",
+    )];
+
+    let recovered = recover_operations(&graph, &[], &edited).unwrap();
+    assert!(
+        recovered.iter().any(|operation| matches!(
+            operation,
+            Operation::CreateSymbol { kind, name, .. }
+                if kind == "property" && name == "label"
+        )),
+        "added property was not recovered as a create: {recovered:?}"
+    );
+
+    operations.extend(recovered);
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(rerendered.contains("label: string"), "{rerendered}");
+}
+
+#[test]
+fn recovers_deleted_property() {
+    let mut operations = import_operations(
+        "export class Counter {\n  count: number = 0;\n  label: string = \"c\";\n}\n",
+    );
+    let graph = materialize_operations(operations.clone());
+    let label_id = graph.find_symbol("label")[0].id;
+    let edited = vec![sample_file(
+        "export class Counter {\n  count: number = 0;\n}\n",
+    )];
+
+    let recovered = recover_operations(&graph, &[], &edited).unwrap();
+    assert!(
+        recovered
+            .iter()
+            .any(|operation| matches!(operation, Operation::DeleteSymbol { symbol_id } if *symbol_id == label_id)),
+        "deleted property was not recovered as a delete: {recovered:?}"
+    );
+
+    operations.extend(recovered);
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(!rerendered.contains("label"), "{rerendered}");
 }
 
 #[test]
@@ -376,4 +490,48 @@ export class OrderService /* bonhomme:symbol={class_id} */ {{
     let structural = recover_operations(&graph, &[], &modified).unwrap();
 
     assert_eq!(structural, legacy);
+}
+
+#[test]
+fn diff_adds_class_property() {
+    // The slice-to-slice diff path also recovers property edits (parallel to recover_operations).
+    let file_id = Uuid::new_v4();
+    let class_id = Uuid::new_v4();
+    let existing_id = Uuid::new_v4();
+    let original = vec![RenderedFile {
+        path: "src/Svc.ts".to_string(),
+        content: format!(
+            r#"// bonhomme:file={file_id}
+
+class Svc /* bonhomme:symbol={class_id} */ {{
+  existing(): void /* bonhomme:symbol={existing_id} */ {{
+    return;
+  }}
+}}
+"#
+        ),
+    }];
+    let modified = vec![RenderedFile {
+        path: "src/Svc.ts".to_string(),
+        content: format!(
+            r#"// bonhomme:file={file_id}
+
+class Svc /* bonhomme:symbol={class_id} */ {{
+  count: number = 0;
+  existing(): void /* bonhomme:symbol={existing_id} */ {{
+    return;
+  }}
+}}
+"#
+        ),
+    }];
+
+    let operations = diff_slice(&original, &modified).unwrap();
+    assert!(
+        operations.iter().any(|operation| matches!(
+            operation,
+            Operation::CreateSymbol { kind, name, .. } if kind == "property" && name == "count"
+        )),
+        "added class property was not diffed as a create: {operations:?}"
+    );
 }

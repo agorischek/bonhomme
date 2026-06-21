@@ -16,6 +16,15 @@ pub(super) struct BaseClass {
     pub(super) id: Uuid,
     pub(super) name: String,
     pub(super) methods: Vec<BaseMethod>,
+    pub(super) properties: Vec<BaseProperty>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct BaseProperty {
+    pub(super) id: Uuid,
+    pub(super) name: String,
+    pub(super) declaration: String,
+    pub(super) doc: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -98,9 +107,9 @@ fn base_file(base: &SemanticGraph, file: &SymbolNode) -> BaseFile {
 }
 
 fn base_class(base: &SemanticGraph, class: &SymbolNode) -> BaseClass {
-    let methods = base
-        .children_of(class.id)
-        .into_iter()
+    let children = base.children_of(class.id);
+    let methods = children
+        .iter()
         .filter(|symbol| matches!(symbol.kind.as_str(), "method" | "static-method"))
         .map(|method| BaseMethod {
             id: method.id,
@@ -111,11 +120,23 @@ fn base_class(base: &SemanticGraph, class: &SymbolNode) -> BaseClass {
             doc: metadata_string(&method.metadata, "doc"),
         })
         .collect();
+    let properties = children
+        .iter()
+        .filter(|symbol| symbol.kind == "property")
+        .map(|property| BaseProperty {
+            id: property.id,
+            name: property.name.clone(),
+            declaration: metadata_string(&property.metadata, "declaration")
+                .unwrap_or_else(|| format!("{}: unknown;", property.name)),
+            doc: metadata_string(&property.metadata, "doc"),
+        })
+        .collect();
 
     BaseClass {
         id: class.id,
         name: class.name.clone(),
         methods,
+        properties,
     }
 }
 

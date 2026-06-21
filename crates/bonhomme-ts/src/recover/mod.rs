@@ -9,7 +9,7 @@ use self::{
 };
 use crate::{
     oxc_parse::metadata_with_doc,
-    parse::{ParsedClass, ParsedFile, ParsedFunction, ParsedMethod, parse_files},
+    parse::{ParsedClass, ParsedFile, ParsedFunction, ParsedMethod, ParsedProperty, parse_files},
     scanner::stable_import_uuid,
 };
 use anyhow::{Context, Result, bail};
@@ -183,6 +183,7 @@ fn recover_classes(
         };
         consumed_classes.insert(base_index);
         recover_methods(base_file, base_class, &edited_class.methods, planned)?;
+        recover_properties(base_file, base_class, &edited_class.properties, planned);
     }
 
     for (index, base_class) in base_file.classes.iter().enumerate() {
@@ -279,6 +280,68 @@ fn recover_methods(
     }
 
     Ok(())
+}
+
+/// Recover edits to a class's properties. Properties have no body, so they are matched by name
+/// (a rename reads as delete-old + create-new) and a declaration- or doc-change becomes an
+/// `UpdateSymbol`. New properties are created and removed ones deleted. Properties are not call
+/// targets, so they never touch the reference plan.
+fn recover_properties(
+    base_file: &BaseFile,
+    base_class: &BaseClass,
+    edited_properties: &[ParsedProperty],
+    planned: &mut PlannedOperations,
+) {
+    let mut consumed = BTreeSet::new();
+    for edited in edited_properties {
+        match base_class
+            .properties
+            .iter()
+            .find(|property| property.name == edited.name)
+        {
+            Some(base) => {
+                consumed.insert(base.id);
+                if base.declaration != edited.declaration
+                    || base.doc.as_deref() != edited.doc.as_deref()
+                {
+                    planned.symbol_edits.push(Operation::UpdateSymbol {
+                        symbol_id: base.id,
+                        name: None,
+                        body: None,
+                        metadata: Some(metadata_with_doc(
+                            json!({ "declaration": edited.declaration }),
+                            edited.doc.as_deref(),
+                        )),
+                    });
+                }
+            }
+            None => {
+                let symbol_id = stable_import_uuid(&format!(
+                    "property:{}:{}:{}",
+                    base_file.path, base_class.id, edited.name
+                ));
+                planned.symbol_edits.push(Operation::CreateSymbol {
+                    symbol_id,
+                    parent_id: Some(base_class.id),
+                    kind: "property".to_string(),
+                    name: edited.name.clone(),
+                    body: None,
+                    metadata: metadata_with_doc(
+                        json!({ "declaration": edited.declaration }),
+                        edited.doc.as_deref(),
+                    ),
+                });
+            }
+        }
+    }
+
+    for base in &base_class.properties {
+        if !consumed.contains(&base.id) {
+            planned
+                .symbol_deletes
+                .push(Operation::DeleteSymbol { symbol_id: base.id });
+        }
+    }
 }
 
 fn signature_is_exported(signature: &str) -> bool {

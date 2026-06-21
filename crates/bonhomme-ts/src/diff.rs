@@ -1,7 +1,7 @@
 use crate::{
     import::import_typescript_files,
     oxc_parse::metadata_with_doc,
-    parse::{ParsedFile, parse_files},
+    parse::{ParsedClass, ParsedFile, parse_files},
     scanner::stable_import_uuid,
 };
 use anyhow::{Context, Result, bail};
@@ -216,9 +216,74 @@ fn diff_classes(
                 }
             }
         }
+        diff_properties(path, parent_id, original_class, modified_class, &mut operations);
     }
 
     Ok(operations)
+}
+
+/// Diff a class's properties by name (they have no body or identity comment to match on). A changed
+/// declaration or doc becomes an `UpdateSymbol`; new properties are created and removed ones deleted.
+/// The id is a pure function of (path, class id, name), matching the importer's seed.
+fn diff_properties(
+    path: &str,
+    parent_id: Uuid,
+    original_class: &ParsedClass,
+    modified_class: &ParsedClass,
+    operations: &mut Vec<Operation>,
+) {
+    for property in &modified_class.properties {
+        match original_class
+            .properties
+            .iter()
+            .find(|original| original.name == property.name)
+        {
+            Some(original) => {
+                if original.declaration != property.declaration
+                    || original.doc.as_deref() != property.doc.as_deref()
+                {
+                    operations.push(Operation::UpdateSymbol {
+                        symbol_id: property_id(path, parent_id, &property.name),
+                        name: None,
+                        body: None,
+                        metadata: Some(metadata_with_doc(
+                            json!({ "declaration": property.declaration }),
+                            property.doc.as_deref(),
+                        )),
+                    });
+                }
+            }
+            None => {
+                operations.push(Operation::CreateSymbol {
+                    symbol_id: property_id(path, parent_id, &property.name),
+                    parent_id: Some(parent_id),
+                    kind: "property".to_string(),
+                    name: property.name.clone(),
+                    body: None,
+                    metadata: metadata_with_doc(
+                        json!({ "declaration": property.declaration }),
+                        property.doc.as_deref(),
+                    ),
+                });
+            }
+        }
+    }
+
+    for property in &original_class.properties {
+        if !modified_class
+            .properties
+            .iter()
+            .any(|modified| modified.name == property.name)
+        {
+            operations.push(Operation::DeleteSymbol {
+                symbol_id: property_id(path, parent_id, &property.name),
+            });
+        }
+    }
+}
+
+fn property_id(path: &str, parent_id: Uuid, name: &str) -> Uuid {
+    stable_import_uuid(&format!("property:{path}:{parent_id}:{name}"))
 }
 
 fn diff_deletes(
