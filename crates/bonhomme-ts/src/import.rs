@@ -32,11 +32,7 @@ pub(crate) fn create_operations_from_parsed_files(files: &[ParsedFile]) -> Vec<O
             kind: "file".to_string(),
             name: file.path.clone(),
             body: None,
-            metadata: json!({
-                "handler": "typescript",
-                "path": file.path,
-                "preamble": file.preamble
-            }),
+            metadata: file_metadata(file),
         });
 
         for operation in create_top_level_operations(file, file_id, &mut indexes) {
@@ -114,6 +110,14 @@ pub(crate) fn resolved_property_id(
             "property:{}:{}:{}",
             file.path, class_id, property.name
         ))
+    })
+}
+
+pub(crate) fn file_metadata(file: &ParsedFile) -> serde_json::Value {
+    json!({
+        "handler": "typescript",
+        "path": file.path,
+        "preamble": file.preamble
     })
 }
 

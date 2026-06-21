@@ -430,6 +430,34 @@ export function formatOrder(id: string): string /* bonhomme:symbol={format_id} *
 }
 
 #[test]
+fn diff_slice_updates_file_preamble() {
+    let original = vec![RenderedFile {
+        path: "src/config.ts".to_string(),
+        content:
+            "const prefix = \"old\";\n\nexport function label(): string {\n  return prefix;\n}\n"
+                .to_string(),
+    }];
+    let modified = vec![RenderedFile {
+        path: "src/config.ts".to_string(),
+        content:
+            "const prefix = \"new\";\n\nexport function label(): string {\n  return prefix;\n}\n"
+                .to_string(),
+    }];
+
+    let operations = diff_slice(&original, &modified).unwrap();
+
+    assert!(
+        operations.iter().any(|operation| matches!(
+            operation,
+            Operation::UpdateSymbol { metadata: Some(metadata), .. }
+                if metadata.get("preamble").and_then(|value| value.as_str())
+                    == Some("const prefix = \"new\";")
+        )),
+        "file preamble edit was not diffed: {operations:?}"
+    );
+}
+
+#[test]
 fn tsdoc_round_trips_on_class_and_members() {
     // Regression: leading `/** */` docs on a class and its members were dropped on render.
     let source = "\

@@ -218,6 +218,53 @@ fn recovers_deleted_property() {
 }
 
 #[test]
+fn recovers_file_preamble_edit() {
+    let mut operations = import_operations(
+        "import { format } from \"./format\";\n\nexport function run(): string {\n  return format(\"x\");\n}\n",
+    );
+    let graph = materialize_operations(operations.clone());
+    let file_id = graph.root_symbols()[0].id;
+    let edited = vec![sample_file(
+        "import { format as fmt } from \"./format\";\n\nexport function run(): string {\n  return fmt(\"x\");\n}\n",
+    )];
+
+    let recovered = recover_operations(&graph, &[], &edited).unwrap();
+    assert!(
+        recovered.iter().any(|operation| matches!(
+            operation,
+            Operation::UpdateSymbol { symbol_id, metadata: Some(metadata), .. }
+                if *symbol_id == file_id
+                    && metadata.get("preamble").and_then(|value| value.as_str())
+                        .is_some_and(|preamble| preamble.contains("format as fmt"))
+        )),
+        "file preamble edit was not recovered: {recovered:?}"
+    );
+
+    operations.extend(recovered);
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(rerendered.contains("format as fmt"), "{rerendered}");
+    assert!(!rerendered.contains("import { format }"), "{rerendered}");
+}
+
+#[test]
+fn recovering_rendered_file_does_not_duplicate_generated_banner() {
+    let operations = import_operations(
+        "const prefix = \"order\";\n\nexport function run(): string {\n  return prefix;\n}\n",
+    );
+    let graph = materialize_operations(operations);
+    let rendered = render_files(&graph);
+
+    let recovered = recover_operations(&graph, &[], &rendered).unwrap();
+
+    assert!(
+        recovered.is_empty(),
+        "an unchanged rendered file should not produce preamble edits: {recovered:?}"
+    );
+}
+
+#[test]
 fn renames_clean_method_by_structure() {
     let graph = import_graph(
         r#"

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use bonhomme_core::{SemanticGraph, SymbolNode, metadata_string};
+use bonhomme_core::{SemanticGraph, SymbolNode, metadata_bool, metadata_string};
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 
@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub(super) struct BaseFile {
     pub(super) id: Uuid,
     pub(super) path: String,
+    pub(super) preamble: String,
     pub(super) classes: Vec<BaseClass>,
     pub(super) functions: Vec<BaseFunction>,
 }
@@ -15,6 +16,8 @@ pub(super) struct BaseFile {
 pub(super) struct BaseClass {
     pub(super) id: Uuid,
     pub(super) name: String,
+    pub(super) declaration: String,
+    pub(super) doc: Option<String>,
     pub(super) methods: Vec<BaseMethod>,
     pub(super) properties: Vec<BaseProperty>,
 }
@@ -39,9 +42,12 @@ pub(super) struct BaseFunction {
 #[derive(Clone, Debug)]
 pub(super) struct BaseMethod {
     pub(super) id: Uuid,
+    pub(super) kind: String,
     pub(super) name: String,
     pub(super) signature: String,
     pub(super) body: String,
+    pub(super) method_kind: String,
+    pub(super) is_static: bool,
     pub(super) doc: Option<String>,
 }
 
@@ -83,6 +89,7 @@ pub(super) fn base_files_by_path(
 
 fn base_file(base: &SemanticGraph, file: &SymbolNode) -> BaseFile {
     let path = metadata_string(&file.metadata, "path").unwrap_or_else(|| file.name.clone());
+    let preamble = metadata_string(&file.metadata, "preamble").unwrap_or_default();
     let mut classes = Vec::new();
     let mut functions = Vec::new();
     for child in base.children_of(file.id) {
@@ -101,6 +108,7 @@ fn base_file(base: &SemanticGraph, file: &SymbolNode) -> BaseFile {
     BaseFile {
         id: file.id,
         path,
+        preamble,
         classes,
         functions,
     }
@@ -110,13 +118,27 @@ fn base_class(base: &SemanticGraph, class: &SymbolNode) -> BaseClass {
     let children = base.children_of(class.id);
     let methods = children
         .iter()
-        .filter(|symbol| matches!(symbol.kind.as_str(), "method" | "static-method"))
+        .filter(|symbol| {
+            matches!(
+                symbol.kind.as_str(),
+                "method"
+                    | "static-method"
+                    | "getter"
+                    | "static-getter"
+                    | "setter"
+                    | "static-setter"
+            )
+        })
         .map(|method| BaseMethod {
             id: method.id,
+            kind: method.kind.clone(),
             name: method.name.clone(),
             signature: metadata_string(&method.metadata, "signature")
                 .unwrap_or_else(|| format!("{}(): void", method.name)),
             body: method.body.clone().unwrap_or_default(),
+            method_kind: metadata_string(&method.metadata, "methodKind")
+                .unwrap_or_else(|| "Method".to_string()),
+            is_static: metadata_bool(&method.metadata, "static"),
             doc: metadata_string(&method.metadata, "doc"),
         })
         .collect();
@@ -135,6 +157,9 @@ fn base_class(base: &SemanticGraph, class: &SymbolNode) -> BaseClass {
     BaseClass {
         id: class.id,
         name: class.name.clone(),
+        declaration: metadata_string(&class.metadata, "declaration")
+            .unwrap_or_else(|| format!("class {}", class.name)),
+        doc: metadata_string(&class.metadata, "doc"),
         methods,
         properties,
     }
