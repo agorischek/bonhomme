@@ -3,7 +3,6 @@ kinds:
     - permanent
     - performance
     - compatibility
-
 exclude:
     gitignored: true
     categories:
@@ -14,7 +13,6 @@ exclude:
         - tests
         - vendored
         - dependencies
-
 standards:
     filesystem.bytes:
         max: 50000
@@ -24,9 +22,169 @@ standards:
         max: 500
     scc.complexity:
         max: 50
-
 warnings:
     percentBelowMax: 10
     percentAboveMin: 10
-
-variances: {}
+variances:
+    crates/bonhomme-core/src/core/graph.rs:
+        kind: architectural
+        reason: Existing cohesive module exceeds repository thresholds; decomposition should be handled as focused follow-up work.
+        metrics:
+            scc.complexity:
+                max: 83
+                reason: Semantic graph replay and validation are centralized in one core module today.
+    crates/bonhomme-core/src/core/tests.rs:
+        kind: permanent
+        reason: Large coverage-focused test module is accepted until test fixtures are reorganized.
+        metrics:
+            scc.code_lines:
+                max: 767
+                reason: Core replay and merge scenarios live together to keep regression coverage coherent.
+    crates/bonhomme-csharp/src/import.rs:
+        kind: architectural
+        reason: Existing language importer exceeds repository thresholds; decomposition should be handled as focused follow-up work.
+        metrics:
+            scc.code_lines:
+                max: 532
+                reason: C# import currently keeps parser lowering and operation construction in one module.
+            scc.complexity:
+                max: 67
+                reason: C# syntax lowering has branching by declaration kind.
+    crates/bonhomme-elixir/src/import.rs:
+        kind: architectural
+        reason: Existing language importer exceeds repository thresholds; decomposition should be handled as focused follow-up work.
+        metrics:
+            scc.code_lines:
+                max: 663
+                reason: Elixir import currently keeps parser lowering and operation construction in one module.
+            scc.complexity:
+                max: 111
+                reason: Elixir syntax lowering has branching by node and declaration kind.
+    crates/bonhomme-engine/src/backend/postgres.rs:
+        kind: architectural
+        reason: Storage backend module size is accepted pending a focused backend decomposition.
+        metrics:
+            scc.code_lines:
+                max: 536
+                reason: Postgres backend keeps SQL mappings colocated with backend operations.
+    crates/bonhomme-engine/src/backend/turso.rs:
+        kind: architectural
+        reason: Storage backend module size is accepted pending a focused backend decomposition.
+        metrics:
+            scc.code_lines:
+                max: 799
+                reason: Turso backend keeps schema, mappings, and backend operations colocated.
+    crates/bonhomme-fallback/src/toml.rs:
+        kind: architectural
+        reason: Fallback handler complexity is accepted pending a focused parser decomposition.
+        metrics:
+            filesystem.longest_line:
+                max: 172
+                reason: The longest line is a test/source fixture where wrapping would reduce clarity.
+            scc.code_lines:
+                max: 529
+                reason: TOML scanning, import, render, and tests are currently colocated.
+            scc.complexity:
+                max: 73
+                reason: TOML scanning tracks string/comment/table state in one module.
+    crates/bonhomme-fallback/src/treesitter.rs:
+        kind: architectural
+        reason: Fallback handler complexity is accepted pending a focused parser decomposition.
+        metrics:
+            filesystem.longest_line:
+                max: 181
+                reason: The longest line is a test/source fixture where wrapping would reduce clarity.
+            scc.code_lines:
+                max: 522
+                reason: Tree-sitter fallback import, render, and recovery tests are currently colocated.
+            scc.complexity:
+                max: 55
+                reason: Tree-sitter fallback has parser routing and recovery branches in one module.
+    crates/bonhomme-fallback/src/yaml.rs:
+        kind: architectural
+        reason: Fallback handler complexity is accepted pending a focused parser decomposition.
+        metrics:
+            scc.complexity:
+                max: 58
+                reason: YAML scanning tracks indentation and comment state in one module.
+    crates/bonhomme-go/go-helper/parse.go:
+        kind: architectural
+        reason: Go helper parser complexity is accepted pending focused parser decomposition.
+        metrics:
+            scc.complexity:
+                max: 56
+                reason: Go AST/type lowering is centralized in the helper parser.
+    crates/bonhomme-go/src/tests.rs:
+        kind: permanent
+        reason: Language tests include long source fixtures that are accepted for readability.
+        metrics:
+            filesystem.longest_line:
+                max: 152
+                reason: The long line is embedded source text used by Go import/render tests.
+    crates/bonhomme-python/src/import.rs:
+        kind: architectural
+        reason: Existing language importer exceeds repository thresholds; decomposition should be handled as focused follow-up work.
+        metrics:
+            scc.code_lines:
+                max: 545
+                reason: Python import currently keeps parser lowering and operation construction in one module.
+            scc.complexity:
+                max: 61
+                reason: Python syntax lowering has branching by declaration kind.
+    crates/bonhomme-rust/src/import.rs:
+        kind: architectural
+        reason: Existing language importer exceeds repository thresholds; decomposition should be handled as focused follow-up work.
+        metrics:
+            scc.code_lines:
+                max: 689
+                reason: Rust import currently keeps parser lowering and operation construction in one module.
+    crates/bonhomme-ts/src/tests.rs:
+        kind: permanent
+        reason: Large coverage-focused test module is accepted until test fixtures are reorganized.
+        metrics:
+            scc.code_lines:
+                max: 652
+                reason: TypeScript import, render, and recovery regression coverage lives in one module.
+    crates/bonhomme/src/cli/commands.rs:
+        kind: architectural
+        reason: CLI command module complexity is accepted pending command handler decomposition.
+        metrics:
+            filesystem.longest_line:
+                max: 168
+                reason: The longest line is user-facing command/help text where wrapping is less readable.
+            scc.code_lines:
+                max: 925
+                reason: Command dispatch and helper routines are currently colocated.
+            scc.complexity:
+                max: 78
+                reason: Command dispatch necessarily branches by subcommand in the current structure.
+    crates/bonhomme/src/cli/session.rs:
+        kind: architectural
+        reason: Session workflow complexity is accepted pending focused session decomposition.
+        metrics:
+            scc.code_lines:
+                max: 747
+                reason: Session start, review, and land flows are currently colocated.
+            scc.complexity:
+                max: 63
+                reason: Session workflow branches by filesystem and operation-recovery state.
+    crates/bonhomme/src/explorer.rs:
+        kind: architectural
+        reason: Explorer module complexity is accepted pending focused UI/server decomposition.
+        metrics:
+            filesystem.longest_line:
+                max: 159
+                reason: The longest line is embedded UI markup/CSS where wrapping would reduce template clarity.
+            scc.code_lines:
+                max: 902
+                reason: Explorer server, snapshot construction, and HTML rendering are currently colocated.
+            scc.complexity:
+                max: 76
+                reason: Explorer rendering and query handling branch over graph state and request parameters.
+    crates/bonhomme/src/simulation.rs:
+        kind: architectural
+        reason: Simulation module size is accepted pending focused simulation decomposition.
+        metrics:
+            scc.code_lines:
+                max: 616
+                reason: Simulation state, agent behavior, and tests are currently colocated.
