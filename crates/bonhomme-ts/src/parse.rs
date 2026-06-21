@@ -1,13 +1,14 @@
 use crate::import::calls::{CallTarget, collect_function_calls};
 use crate::oxc_parse::{
     DocComments, body_text, class_declaration_before_body, declaration_before_body,
-    find_file_symbol_id, find_symbol_id, span_text, strip_symbol_comments, with_program,
+    find_file_symbol_id, find_symbol_id, outside_ranges, span_range, span_text,
+    strip_symbol_comments, with_program,
 };
 use anyhow::Result;
 use bonhomme_core::RenderedFile;
 use oxc_ast::ast::{
-    Class, ClassElement, Declaration, Function, MethodDefinition, PropertyDefinition, PropertyKey,
-    Statement,
+    Class, ClassElement, Declaration, Function, MethodDefinition, MethodDefinitionKind,
+    PropertyDefinition, PropertyKey, Statement,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -18,9 +19,12 @@ use uuid::Uuid;
 pub struct ParsedMethod {
     pub symbol_id: Option<Uuid>,
     pub parent_class_id: Option<Uuid>,
+    pub kind: String,
     pub name: String,
     pub signature: String,
     pub body: String,
+    pub method_kind: String,
+    pub is_static: bool,
     #[serde(default)]
     pub doc: Option<String>,
     #[serde(skip)]
@@ -43,9 +47,14 @@ pub struct ParsedProperty {
 pub struct ParsedClass {
     pub symbol_id: Option<Uuid>,
     pub name: String,
+    pub declaration: String,
+    #[serde(default)]
+    pub doc: Option<String>,
     pub methods: Vec<ParsedMethod>,
     #[serde(default)]
     pub properties: Vec<ParsedProperty>,
+    #[serde(skip)]
+    pub(crate) member_order: Vec<ParsedClassMemberIndex>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -66,8 +75,12 @@ pub struct ParsedFunction {
 pub struct ParsedFile {
     pub path: String,
     pub file_symbol_id: Option<Uuid>,
+    #[serde(default)]
+    pub preamble: String,
     pub classes: Vec<ParsedClass>,
     pub functions: Vec<ParsedFunction>,
+    #[serde(skip)]
+    pub(crate) top_level_order: Vec<ParsedTopLevelIndex>,
 }
 
 impl ParsedFile {
@@ -97,6 +110,18 @@ impl ParsedFile {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ParsedTopLevelIndex {
+    Class(usize),
+    Function(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ParsedClassMemberIndex {
+    Method(usize),
+    Property(usize),
+}
+
 pub(crate) fn parse_files(files: &[RenderedFile]) -> Result<BTreeMap<String, ParsedFile>> {
     let mut by_path = BTreeMap::new();
     for file in files {
@@ -108,21 +133,44 @@ pub(crate) fn parse_files(files: &[RenderedFile]) -> Result<BTreeMap<String, Par
 pub fn parse_file(file: &RenderedFile) -> Result<ParsedFile> {
     let mut classes = Vec::new();
     let mut functions = Vec::new();
+    let mut top_level_entries = Vec::new();
 
     with_program(&file.path, &file.content, |program| {
         let docs = DocComments::from_comments(&file.content, &program.comments);
         for statement in &program.body {
-            parse_top_level_statement(file, statement, &docs, &mut classes, &mut functions);
+            if let Some(entry) =
+                parse_top_level_statement(file, statement, &docs, &mut classes, &mut functions)
+            {
+                top_level_entries.push(entry);
+            }
         }
         Ok(())
     })?;
 
+    top_level_entries.sort_by_key(|entry| entry.start);
+    let top_level_ranges = top_level_entries
+        .iter()
+        .map(|entry| (entry.start, entry.end))
+        .collect::<Vec<_>>();
+    let top_level_order = top_level_entries
+        .into_iter()
+        .map(|entry| entry.index)
+        .collect();
+
     Ok(ParsedFile {
         path: file.path.clone(),
         file_symbol_id: find_file_symbol_id(&file.content),
+        preamble: outside_ranges(&file.content, &top_level_ranges),
         classes,
         functions,
+        top_level_order,
     })
+}
+
+struct ParsedTopLevelEntry {
+    start: usize,
+    end: usize,
+    index: ParsedTopLevelIndex,
 }
 
 fn parse_top_level_statement(
@@ -131,42 +179,70 @@ fn parse_top_level_statement(
     docs: &DocComments,
     classes: &mut Vec<ParsedClass>,
     functions: &mut Vec<ParsedFunction>,
-) {
+) -> Option<ParsedTopLevelEntry> {
     match statement {
-        Statement::ClassDeclaration(class) => {
-            push_class(file, class, class.span.start as usize, docs, classes)
-        }
+        Statement::ClassDeclaration(class) => push_class(
+            file,
+            class,
+            class.span.start as usize,
+            class.span,
+            docs,
+            classes,
+        ),
         Statement::FunctionDeclaration(function) => push_function(
             file,
             function,
             function.span.start as usize,
+            function.span,
             docs,
             functions,
         ),
         Statement::ExportNamedDeclaration(export) => {
             let Some(declaration) = &export.declaration else {
-                return;
+                return None;
             };
             match declaration {
-                Declaration::ClassDeclaration(class) => {
-                    push_class(file, class, export.span.start as usize, docs, classes);
-                }
-                Declaration::FunctionDeclaration(function) => {
-                    push_function(file, function, export.span.start as usize, docs, functions);
-                }
-                _ => {}
+                Declaration::ClassDeclaration(class) => push_class(
+                    file,
+                    class,
+                    export.span.start as usize,
+                    export.span,
+                    docs,
+                    classes,
+                ),
+                Declaration::FunctionDeclaration(function) => push_function(
+                    file,
+                    function,
+                    export.span.start as usize,
+                    export.span,
+                    docs,
+                    functions,
+                ),
+                _ => None,
             }
         }
         Statement::ExportDefaultDeclaration(export) => match &export.declaration {
-            oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-                push_class(file, class, export.span.start as usize, docs, classes);
-            }
+            oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => push_class(
+                file,
+                class,
+                export.span.start as usize,
+                export.span,
+                docs,
+                classes,
+            ),
             oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
-                push_function(file, function, export.span.start as usize, docs, functions);
+                push_function(
+                    file,
+                    function,
+                    export.span.start as usize,
+                    export.span,
+                    docs,
+                    functions,
+                )
             }
-            _ => {}
+            _ => None,
         },
-        _ => {}
+        _ => None,
     }
 }
 
@@ -174,64 +250,112 @@ fn push_class(
     file: &RenderedFile,
     class: &Class<'_>,
     declaration_start: usize,
+    range_span: oxc_span::Span,
     docs: &DocComments,
     classes: &mut Vec<ParsedClass>,
-) {
+) -> Option<ParsedTopLevelEntry> {
     let Some(name) = class.id.as_ref().map(|id| id.name.to_string()) else {
-        return;
+        return None;
     };
-    let declaration =
+    let raw_declaration =
         class_declaration_before_body(&file.content, declaration_start, class.body.span);
-    let symbol_id = find_symbol_id(&declaration);
+    let symbol_id = find_symbol_id(&raw_declaration);
+    let leading_doc = docs.leading_for(declaration_start, &file.content);
+    let (methods, properties, member_order) = parse_class_members(file, class, symbol_id, docs);
+    let class_index = classes.len();
     classes.push(ParsedClass {
         symbol_id,
         name,
-        methods: parse_methods(file, class, symbol_id, docs),
-        properties: parse_properties(file, class, symbol_id, docs),
+        declaration: strip_symbol_comments(&raw_declaration),
+        doc: leading_doc.map(|(_, doc)| doc.to_string()),
+        methods,
+        properties,
+        member_order,
     });
+
+    let (mut start, end) = span_range(range_span);
+    if let Some((doc_start, _)) = leading_doc {
+        start = start.min(doc_start);
+    }
+    Some(ParsedTopLevelEntry {
+        start,
+        end,
+        index: ParsedTopLevelIndex::Class(class_index),
+    })
 }
 
 fn push_function(
     file: &RenderedFile,
     function: &Function<'_>,
     declaration_start: usize,
+    range_span: oxc_span::Span,
     docs: &DocComments,
     functions: &mut Vec<ParsedFunction>,
-) {
+) -> Option<ParsedTopLevelEntry> {
     let Some(body) = function.body.as_ref() else {
-        return;
+        return None;
     };
     let Some(name) = function.id.as_ref().map(|id| id.name.to_string()) else {
-        return;
+        return None;
     };
     let raw_signature = declaration_before_body(&file.content, declaration_start, body);
+    let leading_doc = docs.leading_for(declaration_start, &file.content);
+    let function_index = functions.len();
     functions.push(ParsedFunction {
         symbol_id: find_symbol_id(&raw_signature),
         name,
         signature: strip_symbol_comments(&raw_signature),
         body: body_text(&file.content, body),
-        doc: leading_doc(docs, declaration_start, &file.content),
+        doc: leading_doc.map(|(_, doc)| doc.to_string()),
         calls: collect_function_calls(function),
     });
+
+    let (mut start, end) = span_range(range_span);
+    if let Some((doc_start, _)) = leading_doc {
+        start = start.min(doc_start);
+    }
+    Some(ParsedTopLevelEntry {
+        start,
+        end,
+        index: ParsedTopLevelIndex::Function(function_index),
+    })
 }
 
-fn parse_methods(
+fn parse_class_members(
     file: &RenderedFile,
     class: &Class<'_>,
     parent_class_id: Option<Uuid>,
     docs: &DocComments,
-) -> Vec<ParsedMethod> {
-    class
-        .body
-        .body
-        .iter()
-        .filter_map(|element| match element {
+) -> (
+    Vec<ParsedMethod>,
+    Vec<ParsedProperty>,
+    Vec<ParsedClassMemberIndex>,
+) {
+    let mut methods = Vec::new();
+    let mut properties = Vec::new();
+    let mut member_order = Vec::new();
+
+    for element in &class.body.body {
+        match element {
             ClassElement::MethodDefinition(method) => {
-                parse_method(file, method, parent_class_id, docs)
+                if let Some(parsed) = parse_method(file, method, parent_class_id, docs) {
+                    let index = methods.len();
+                    methods.push(parsed);
+                    member_order.push(ParsedClassMemberIndex::Method(index));
+                }
             }
-            _ => None,
-        })
-        .collect()
+            ClassElement::PropertyDefinition(property) => {
+                if let Some(parsed) = parse_property(file, property, parent_class_id, docs) {
+                    let index = properties.len();
+                    properties.push(parsed);
+                    member_order.push(ParsedClassMemberIndex::Property(index));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    (methods, properties, member_order)
 }
 
 fn parse_method(
@@ -250,31 +374,15 @@ fn parse_method(
     Some(ParsedMethod {
         symbol_id: find_symbol_id(&raw_signature),
         parent_class_id,
+        kind: method_symbol_kind(method).to_string(),
         name,
         signature: strip_symbol_comments(&raw_signature),
         body: body_text(&file.content, body),
+        method_kind: format!("{:?}", method.kind),
+        is_static: method.r#static,
         doc: leading_doc(docs, method.span.start as usize, &file.content),
         calls: collect_function_calls(&method.value),
     })
-}
-
-fn parse_properties(
-    file: &RenderedFile,
-    class: &Class<'_>,
-    parent_class_id: Option<Uuid>,
-    docs: &DocComments,
-) -> Vec<ParsedProperty> {
-    class
-        .body
-        .body
-        .iter()
-        .filter_map(|element| match element {
-            ClassElement::PropertyDefinition(property) => {
-                parse_property(file, property, parent_class_id, docs)
-            }
-            _ => None,
-        })
-        .collect()
 }
 
 fn parse_property(
@@ -310,4 +418,15 @@ fn parse_property(
 fn leading_doc(docs: &DocComments, start: usize, source: &str) -> Option<String> {
     docs.leading_for(start, source)
         .map(|(_, doc)| doc.to_string())
+}
+
+fn method_symbol_kind(method: &MethodDefinition<'_>) -> &'static str {
+    match (method.r#static, method.kind) {
+        (true, MethodDefinitionKind::Get) => "static-getter",
+        (true, MethodDefinitionKind::Set) => "static-setter",
+        (true, _) => "static-method",
+        (false, MethodDefinitionKind::Get) => "getter",
+        (false, MethodDefinitionKind::Set) => "setter",
+        (false, _) => "method",
+    }
 }
