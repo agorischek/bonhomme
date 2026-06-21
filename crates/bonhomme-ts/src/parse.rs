@@ -254,9 +254,7 @@ fn push_class(
     docs: &DocComments,
     classes: &mut Vec<ParsedClass>,
 ) -> Option<ParsedTopLevelEntry> {
-    let Some(name) = class.id.as_ref().map(|id| id.name.to_string()) else {
-        return None;
-    };
+    let name = class.id.as_ref().map(|id| id.name.to_string())?;
     let raw_declaration =
         class_declaration_before_body(&file.content, declaration_start, class.body.span);
     let symbol_id = find_symbol_id(&raw_declaration);
@@ -292,12 +290,8 @@ fn push_function(
     docs: &DocComments,
     functions: &mut Vec<ParsedFunction>,
 ) -> Option<ParsedTopLevelEntry> {
-    let Some(body) = function.body.as_ref() else {
-        return None;
-    };
-    let Some(name) = function.id.as_ref().map(|id| id.name.to_string()) else {
-        return None;
-    };
+    let body = function.body.as_ref()?;
+    let name = function.id.as_ref().map(|id| id.name.to_string())?;
     let raw_signature = declaration_before_body(&file.content, declaration_start, body);
     let leading_doc = docs.leading_for(declaration_start, &file.content);
     let function_index = functions.len();
