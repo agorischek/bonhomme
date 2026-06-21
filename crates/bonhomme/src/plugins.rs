@@ -174,6 +174,74 @@ mod tests {
     }
 
     #[test]
+    fn documentation_comments_survive_round_trip_for_every_language() {
+        // The cross-plugin doc-fidelity gate: every structural language must round-trip its
+        // documentation convention. A plugin that parses code but forgets to model its doc comments
+        // silently loses API documentation (TypeScript TSDoc and Go godoc both did) — this fails
+        // loudly so a future plugin (or a regression) cannot ship that gap unseen.
+        let registry = handler_registry(&Config::default());
+        let cases = [
+            (
+                "a.ts",
+                "/** ts-doc-marker */\nexport function f(): number {\n  return 1;\n}\n",
+                "ts-doc-marker",
+            ),
+            ("a.go", "package p\n\n// go-doc-marker\nfunc F() {}\n", "go-doc-marker"),
+            (
+                "a.rs",
+                "/// rs-doc-marker\npub fn answer() -> usize {\n    1\n}\n",
+                "rs-doc-marker",
+            ),
+            (
+                "a.py",
+                "def greet():\n    \"\"\"py-doc-marker\"\"\"\n    return 1\n",
+                "py-doc-marker",
+            ),
+            (
+                "Svc.cs",
+                "class Svc {\n    /// <summary>cs-doc-marker</summary>\n    int M() {\n        return 1;\n    }\n}\n",
+                "cs-doc-marker",
+            ),
+            (
+                "svc.ex",
+                "defmodule Svc do\n  @moduledoc \"ex-doc-marker\"\nend\n",
+                "ex-doc-marker",
+            ),
+        ];
+
+        let files: Vec<RenderedFile> = cases.iter().map(|(path, src, _)| rf(path, src)).collect();
+        let operations = registry.import(&files).expect("polyglot doc import succeeds");
+        let graph = graph_from(&operations);
+
+        // Guard: each fixture must parse *structurally*, not degrade to blob — otherwise docs would
+        // survive verbatim and the gate would pass without testing the plugin's doc handling.
+        let breakdown = registry.handler_breakdown(&graph);
+        for handler in ["typescript", "go", "rust", "python", "csharp", "elixir"] {
+            assert_eq!(
+                breakdown.get(handler),
+                Some(&1),
+                "{handler} fixture did not parse structurally (degraded to blob): {breakdown:?}"
+            );
+        }
+
+        let rendered = registry.render(&graph);
+        let by_path: BTreeMap<&str, &str> = rendered
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_str()))
+            .collect();
+
+        for (path, _, marker) in cases {
+            let content = by_path
+                .get(path)
+                .unwrap_or_else(|| panic!("{path} was not rendered"));
+            assert!(
+                content.contains(marker),
+                "{path}: documentation comment '{marker}' was dropped on round-trip:\n{content}"
+            );
+        }
+    }
+
+    #[test]
     fn unparseable_structured_file_degrades_to_blob() {
         let registry = handler_registry(&Config::default());
         // A `.json` extension but malformed contents: the JSON handler errors, and the router
