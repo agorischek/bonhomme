@@ -70,6 +70,7 @@ pub(super) async fn run(
     );
     print_toolchains(config);
     print_formatters(config);
+    print_session_validation(config);
     println!();
 
     println!("## Workflow");
@@ -78,7 +79,7 @@ pub(super) async fn run(
         println!("Start a local Bonhomme session before agent work:");
         println!();
         println!("```sh");
-        println!("bonhomme session start --reset");
+        println!("{}", session_start_command(config));
         println!("```");
         println!();
         println!("After that, repo-scoped commands will use the session automatically.");
@@ -218,6 +219,26 @@ fn print_formatters(config: &Config) {
         .collect::<Vec<_>>()
         .join(", ");
     println!("- Formatters: {configured}");
+}
+
+fn print_session_validation(config: &Config) {
+    let note = if config.validation.session_start.toolchain_enabled() {
+        "toolchain validation runs during session start"
+    } else {
+        "toolchain validation skipped during session start; graph invariants still checked"
+    };
+    println!(
+        "- Session start validation: {} ({note})",
+        config.validation.session_start.as_str()
+    );
+}
+
+fn session_start_command(config: &Config) -> String {
+    if config.validation.session_start.toolchain_enabled() {
+        "bonhomme session start --reset --validate toolchain".to_string()
+    } else {
+        "bonhomme session start --reset".to_string()
+    }
 }
 
 fn shell_word(value: &str) -> String {

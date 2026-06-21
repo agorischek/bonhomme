@@ -1,9 +1,9 @@
+mod ids;
 mod import;
 mod model;
 mod recover;
 mod render;
 mod source;
-mod toolchain;
 mod validate;
 
 #[cfg(test)]
@@ -12,31 +12,30 @@ mod tests;
 use anyhow::Result;
 use bonhomme_core::{
     Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
-    ValidationContext,
 };
 use std::path::Path;
 use uuid::Uuid;
 
-pub use import::import_go_files;
-pub use recover::recover_go_operations;
+pub use import::import_markdown_files;
+pub use recover::recover_markdown_operations;
 pub use render::{render_files, render_slice};
-pub use source::read_go_tree;
-pub use validate::{validate_go_files, validate_go_files_with_workspace};
+pub use source::read_markdown_tree;
+pub use validate::validate_markdown_files;
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct GoPlugin;
+pub struct MarkdownPlugin;
 
-impl Handler for GoPlugin {
+impl Handler for MarkdownPlugin {
     fn name(&self) -> &str {
-        "go"
+        "markdown"
     }
 
     fn claims(&self, file: &RenderedFile) -> bool {
-        source::is_go_source(file)
+        source::is_markdown_source(file)
     }
 }
 
-impl LanguagePlugin for GoPlugin {
+impl LanguagePlugin for MarkdownPlugin {
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }
@@ -51,16 +50,16 @@ impl LanguagePlugin for GoPlugin {
     }
 
     fn import(&self, files: &[RenderedFile]) -> Result<Vec<Operation>> {
-        import_go_files(files)
+        import_markdown_files(files)
     }
 
     fn diff(&self, original: &[RenderedFile], modified: &[RenderedFile]) -> Result<Vec<Operation>> {
-        let operations = import_go_files(original)?;
+        let operations = import_markdown_files(original)?;
         let mut base = SemanticGraph::default();
         for operation in operations {
             base.apply_operation(Uuid::new_v4(), &operation)?;
         }
-        recover_go_operations(&base, &[], modified)
+        recover_markdown_operations(&base, &[], modified)
     }
 
     fn recover_operations(
@@ -69,21 +68,14 @@ impl LanguagePlugin for GoPlugin {
         scope: &[Uuid],
         edited: &[RenderedFile],
     ) -> Result<Vec<Operation>> {
-        recover_go_operations(base, scope, edited)
+        recover_markdown_operations(base, scope, edited)
     }
 
     fn read_source_tree(&self, root: &Path) -> Result<Vec<RenderedFile>> {
-        read_go_tree(root)
+        read_markdown_tree(root)
     }
 
     fn validate<'a>(&'a self, files: &'a [RenderedFile]) -> ValidateFuture<'a> {
-        Box::pin(validate_go_files(files))
-    }
-
-    fn validate_with_context<'a>(&'a self, context: ValidationContext<'a>) -> ValidateFuture<'a> {
-        Box::pin(validate::validate_go_files_with_workspace(
-            context.all_files,
-            context.files,
-        ))
+        Box::pin(validate_markdown_files(files))
     }
 }

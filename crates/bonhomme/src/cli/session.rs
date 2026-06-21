@@ -19,7 +19,10 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::SessionCommand;
-use crate::{config::Config, explorer};
+use crate::{
+    config::{Config, SessionValidationMode},
+    explorer,
+};
 
 const SESSION_DB_NAME: &str = "session.db";
 const SESSION_MANIFEST_NAME: &str = "session.json";
@@ -279,7 +282,7 @@ async fn start_session(
     repo: Option<String>,
     branch_name: String,
     reset: bool,
-    no_validate: bool,
+    validation_mode: SessionValidationMode,
 ) -> Result<()> {
     let source_path = path.unwrap_or_else(|| root.to_path_buf());
     let repository_name = repo
@@ -288,8 +291,11 @@ async fn start_session(
     let database_url = explicit_database_url
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| session_database_url(root));
-    let storage =
-        Storage::connect(&database_url, crate::plugins::language_registry(config)).await?;
+    let storage = Storage::connect(
+        &database_url,
+        crate::plugins::language_registry(config, root),
+    )
+    .await?;
     storage.migrate().await?;
 
     let (repository, main) = if reset {
@@ -354,7 +360,7 @@ async fn start_session(
         .materialize_branch(&repository_name, &branch.name)
         .await?;
     materialized.graph.validate()?;
-    if !no_validate {
+    if validation_mode.toolchain_enabled() {
         storage.plugin().validate(&materialized.files).await?;
     }
 
@@ -378,7 +384,9 @@ async fn start_session(
             "symbols": materialized.graph.symbols.len(),
             "references": materialized.graph.references.len(),
             "handlerBreakdown": handler_breakdown(&materialized.graph),
-            "validated": !no_validate
+            "validation": validation_mode.as_str(),
+            "validated": validation_mode.toolchain_enabled(),
+            "toolchainValidated": validation_mode.toolchain_enabled()
         }))?
     );
     Ok(())
@@ -587,6 +595,13 @@ pub(super) async fn run(
 ) -> Result<()> {
     match command {
         SessionCommand::Start(args) => {
+            let validation_mode = if args.no_validate {
+                SessionValidationMode::None
+            } else {
+                args.validate
+                    .map(Into::into)
+                    .unwrap_or(config.validation.session_start)
+            };
             start_session(
                 config,
                 root,
@@ -595,14 +610,14 @@ pub(super) async fn run(
                 args.repo,
                 args.branch,
                 args.reset,
-                args.no_validate,
+                validation_mode,
             )
             .await
         }
         SessionCommand::Check(args) => {
             let path = args.path.unwrap_or_else(|| root.to_path_buf());
             let report = check(
-                crate::plugins::language_registry(config),
+                crate::plugins::language_registry(config, root),
                 &path,
                 &config.format,
             )
@@ -628,8 +643,11 @@ pub(super) async fn run(
                 resolve_session_database_url(root, manifest.as_ref(), explicit_database_url);
             let (repository_name, branch_name) =
                 resolve_session_ref(root, manifest.as_ref(), args.repo, args.branch)?;
-            let storage =
-                Storage::connect(&database_url, crate::plugins::language_registry(config)).await?;
+            let storage = Storage::connect(
+                &database_url,
+                crate::plugins::language_registry(config, root),
+            )
+            .await?;
             storage.migrate().await?;
             explorer::serve(
                 storage,
@@ -660,8 +678,11 @@ pub(super) async fn run(
                 );
             }
 
-            let storage =
-                Storage::connect(&database_url, crate::plugins::language_registry(config)).await?;
+            let storage = Storage::connect(
+                &database_url,
+                crate::plugins::language_registry(config, root),
+            )
+            .await?;
             storage.migrate().await?;
             let materialized = storage
                 .materialize_branch(&repository_name, &branch_name)
@@ -717,7 +738,7 @@ mod tests {
         std::fs::write(dir.join("docs").join("blob.bin"), [0u8, 1, 2, 3, 0, 255]).unwrap();
 
         let report = check(
-            crate::plugins::language_registry(&Config::default()),
+            crate::plugins::language_registry(&Config::default(), &dir),
             &dir,
             &BTreeMap::new(),
         )

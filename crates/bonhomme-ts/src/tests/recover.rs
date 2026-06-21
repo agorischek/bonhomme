@@ -159,14 +159,16 @@ fn recovers_property_doc_edit() {
     let rerendered = render_files(&materialize_operations(operations))[0]
         .content
         .clone();
-    assert!(rerendered.contains("/** The current count. */"), "{rerendered}");
+    assert!(
+        rerendered.contains("/** The current count. */"),
+        "{rerendered}"
+    );
     assert!(!rerendered.contains("Running total"), "{rerendered}");
 }
 
 #[test]
 fn recovers_added_property() {
-    let mut operations =
-        import_operations("export class Counter {\n  count: number = 0;\n}\n");
+    let mut operations = import_operations("export class Counter {\n  count: number = 0;\n}\n");
     let graph = materialize_operations(operations.clone());
     let edited = vec![sample_file(
         "export class Counter {\n  count: number = 0;\n  label: string = \"c\";\n}\n",

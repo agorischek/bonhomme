@@ -17,6 +17,16 @@ pub struct MaterializedBranch {
     pub cache_status: CacheStatus,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MaterializedGraph {
+    pub repository: Repository,
+    pub branch: Branch,
+    pub operations: Vec<OperationRecord>,
+    pub graph: SemanticGraph,
+    pub cache_status: CacheStatus,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CacheStatus {

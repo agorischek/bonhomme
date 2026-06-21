@@ -23,6 +23,7 @@ use crate::ids::stable_uuid;
 pub struct JsonHandler;
 
 const KEY_KIND: &str = "json-key";
+const MAX_SEMANTIC_JSON_BYTES: usize = 512 * 1024;
 
 impl Handler for JsonHandler {
     fn name(&self) -> &str {
@@ -174,6 +175,17 @@ impl LanguagePlugin for JsonHandler {
 }
 
 fn import_json_file(path: &str, content: &str) -> Result<Vec<Operation>> {
+    if content.len() > MAX_SEMANTIC_JSON_BYTES {
+        return Ok(vec![Operation::CreateSymbol {
+            symbol_id: json_file_id(path),
+            parent_id: None,
+            kind: "file".to_string(),
+            name: path.to_string(),
+            body: Some(oversized_json_document(path, content.len())),
+            metadata: oversized_json_metadata(path, content.len()),
+        }]);
+    }
+
     let value: Value =
         serde_json::from_str(content).with_context(|| format!("{path} is not valid JSON"))?;
     let file_id = json_file_id(path);
@@ -221,6 +233,21 @@ fn recover_json_file(
     updates: &mut Vec<Operation>,
     deletes: &mut Vec<Operation>,
 ) -> Result<()> {
+    if content.len() > MAX_SEMANTIC_JSON_BYTES {
+        for child in base.children_of(file_symbol.id) {
+            deletes.push(Operation::DeleteSymbol {
+                symbol_id: child.id,
+            });
+        }
+        push_file_update_if_needed(
+            file_symbol,
+            Some(oversized_json_document(path, content.len())),
+            oversized_json_metadata(path, content.len()),
+            updates,
+        );
+        return Ok(());
+    }
+
     let value: Value =
         serde_json::from_str(content).with_context(|| format!("{path} is not valid JSON"))?;
     let base_children = base.children_of(file_symbol.id);
@@ -264,6 +291,7 @@ fn recover_json_file(
                     });
                 }
             }
+            push_file_update_if_needed(file_symbol, None, object_json_metadata(path), updates);
         }
         other => {
             // Edited document is no longer an object: drop any key children and store the canonical
@@ -276,22 +304,27 @@ fn recover_json_file(
                 }
             }
             let document = canonical_document(&other);
-            if file_symbol.body.as_deref() != Some(document.as_str()) {
-                updates.push(Operation::UpdateSymbol {
-                    symbol_id: file_symbol.id,
-                    name: None,
-                    body: Some(document),
-                    metadata: None,
-                });
-            }
+            push_file_update_if_needed(
+                file_symbol,
+                Some(document),
+                other_json_metadata(path),
+                updates,
+            );
         }
     }
     Ok(())
 }
 
 fn render_json_file(graph: &SemanticGraph, file_symbol: &SymbolNode) -> String {
+    if is_oversized_json(file_symbol) {
+        return oversized_json_document(&file_path(file_symbol), oversized_byte_len(file_symbol));
+    }
+
     let children = graph.children_of(file_symbol.id);
     if children.is_empty() {
+        if metadata_top(file_symbol) == Some("object") {
+            return "{}\n".to_string();
+        }
         // Scalar/array document, or an empty object — emit the stored body (canonical document).
         return file_symbol
             .body
@@ -322,6 +355,78 @@ fn canonical_document(value: &Value) -> String {
 /// Pretty JSON without a trailing newline — the canonical form for a stored key value.
 fn canonical_fragment(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string())
+}
+
+fn object_json_metadata(path: &str) -> Value {
+    json!({ "handler": "json", "path": path, "top": "object" })
+}
+
+fn other_json_metadata(path: &str) -> Value {
+    json!({ "handler": "json", "path": path, "top": "other" })
+}
+
+fn oversized_json_metadata(path: &str, byte_len: usize) -> Value {
+    json!({
+        "handler": "json",
+        "path": path,
+        "top": "oversized",
+        "byteLen": byte_len,
+        "maxSemanticBytes": MAX_SEMANTIC_JSON_BYTES,
+        "semanticSkipped": true,
+    })
+}
+
+fn oversized_json_document(path: &str, byte_len: usize) -> String {
+    canonical_document(&json!({
+        "bonhomme": {
+            "note": "oversized JSON omitted from semantic graph",
+            "path": path,
+            "byteLen": byte_len,
+            "maxSemanticBytes": MAX_SEMANTIC_JSON_BYTES,
+        }
+    }))
+}
+
+fn push_file_update_if_needed(
+    file_symbol: &SymbolNode,
+    body: Option<String>,
+    metadata: Value,
+    updates: &mut Vec<Operation>,
+) {
+    let body_changed = body
+        .as_ref()
+        .is_some_and(|body| file_symbol.body.as_deref() != Some(body.as_str()));
+    let metadata_changed = file_symbol.metadata != metadata;
+    if body_changed || metadata_changed {
+        updates.push(Operation::UpdateSymbol {
+            symbol_id: file_symbol.id,
+            name: None,
+            body: if body_changed { body } else { None },
+            metadata: metadata_changed.then_some(metadata),
+        });
+    }
+}
+
+fn metadata_top(symbol: &SymbolNode) -> Option<&str> {
+    symbol.metadata.get("top").and_then(Value::as_str)
+}
+
+fn is_oversized_json(symbol: &SymbolNode) -> bool {
+    metadata_top(symbol) == Some("oversized")
+        || symbol
+            .metadata
+            .get("semanticSkipped")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+fn oversized_byte_len(symbol: &SymbolNode) -> usize {
+    symbol
+        .metadata
+        .get("byteLen")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or_default()
 }
 
 fn file_symbols(graph: &SemanticGraph) -> impl Iterator<Item = &SymbolNode> {
@@ -501,5 +606,43 @@ mod tests {
             JsonHandler.render(&graph)[0].content,
             "[\n  1,\n  2,\n  3\n]\n"
         );
+    }
+
+    #[test]
+    fn oversized_json_imports_as_a_compact_placeholder() {
+        let content = format!(r#"{{"payload":"{}"}}"#, "x".repeat(MAX_SEMANTIC_JSON_BYTES));
+        assert!(content.len() > MAX_SEMANTIC_JSON_BYTES);
+
+        let operations = JsonHandler
+            .import(&[rendered("reports/huge.json", &content)])
+            .unwrap();
+        assert_eq!(operations.len(), 1);
+
+        let Operation::CreateSymbol {
+            kind,
+            body: Some(body),
+            metadata,
+            ..
+        } = &operations[0]
+        else {
+            panic!("expected one placeholder file symbol");
+        };
+        assert_eq!(kind, "file");
+        assert_eq!(
+            metadata.get("top").and_then(Value::as_str),
+            Some("oversized")
+        );
+        assert_eq!(
+            metadata.get("semanticSkipped").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(body.len() < 512);
+        assert!(!body.contains(&"x".repeat(128)));
+
+        let graph = graph_from(&operations);
+        let rendered_files = JsonHandler.render(&graph);
+        serde_json::from_str::<Value>(&rendered_files[0].content).unwrap();
+        assert!(rendered_files[0].content.contains("oversized JSON omitted"));
+        assert!(!rendered_files[0].content.contains(&"x".repeat(128)));
     }
 }

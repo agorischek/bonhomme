@@ -9,7 +9,7 @@ use crate::api;
 use crate::explorer;
 use anyhow::{Context, Result};
 use bonhomme_engine::Storage;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use commands::run_storage_command;
 use std::{
     net::SocketAddr,
@@ -242,9 +242,28 @@ struct SessionStartArgs {
     /// Replace an existing local session for this repository.
     #[arg(long, default_value_t = false)]
     reset: bool,
-    /// Skip language toolchain validation after import.
-    #[arg(long, default_value_t = false)]
+    /// Session-start validation policy. Defaults to [validation].session_start in bonhomme.toml,
+    /// then none.
+    #[arg(long, value_enum)]
+    validate: Option<SessionValidateArg>,
+    /// Deprecated alias for --validate none.
+    #[arg(long, default_value_t = false, conflicts_with = "validate")]
     no_validate: bool,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum SessionValidateArg {
+    None,
+    Toolchain,
+}
+
+impl From<SessionValidateArg> for crate::config::SessionValidationMode {
+    fn from(value: SessionValidateArg) -> Self {
+        match value {
+            SessionValidateArg::None => Self::None,
+            SessionValidateArg::Toolchain => Self::Toolchain,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -372,7 +391,7 @@ pub async fn run() -> Result<()> {
             )
             .await
         }
-        Command::Server(args) => api::serve(Some(database_url), &config, args.addr).await,
+        Command::Server(args) => api::serve(Some(database_url), &config, &root, args.addr).await,
         Command::Explore(args) => {
             let repository_name = match args.repo {
                 Some(repo) => repo,
@@ -382,8 +401,11 @@ pub async fn run() -> Result<()> {
                     .map(Ok)
                     .unwrap_or_else(|| default_repository_name(&root))?,
             };
-            let storage =
-                Storage::connect(&database_url, crate::plugins::language_registry(&config)).await?;
+            let storage = Storage::connect(
+                &database_url,
+                crate::plugins::language_registry(&config, &root),
+            )
+            .await?;
             storage.migrate().await?;
             explorer::serve(
                 storage,
@@ -401,8 +423,11 @@ pub async fn run() -> Result<()> {
             session::run(command, &config, &root, explicit_database_url.as_deref()).await
         }
         command => {
-            let storage =
-                Storage::connect(&database_url, crate::plugins::language_registry(&config)).await?;
+            let storage = Storage::connect(
+                &database_url,
+                crate::plugins::language_registry(&config, &root),
+            )
+            .await?;
             storage.migrate().await?;
             run_storage_command(storage, command, &root).await
         }

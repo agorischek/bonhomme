@@ -626,6 +626,26 @@ impl StorageBackend for TursoBackend {
         }
     }
 
+    async fn get_graph_cache_graph(
+        &self,
+        branch_id: Uuid,
+        operation_count: i64,
+        fingerprint: &str,
+    ) -> Result<Option<Value>> {
+        let conn = self.conn().await?;
+        let mut rows = conn
+            .query(
+                "SELECT graph FROM graph_cache
+                 WHERE branch_id = ?1 AND operation_count = ?2 AND operation_fingerprint = ?3",
+                params![branch_id.to_string(), operation_count, fingerprint],
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => Ok(Some(json(&row, 0)?)),
+            None => Ok(None),
+        }
+    }
+
     async fn store_graph_cache(
         &self,
         repository_id: Uuid,

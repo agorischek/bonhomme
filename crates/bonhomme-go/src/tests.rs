@@ -1,4 +1,7 @@
-use super::{import_go_files, recover_go_operations, render_files, validate_go_files};
+use super::{
+    import_go_files, recover_go_operations, render_files, validate_go_files,
+    validate_go_files_with_workspace,
+};
 use bonhomme_core::{Operation, OperationRecord, RenderedFile, SemanticGraph, materialize};
 use chrono::Utc;
 use uuid::Uuid;
@@ -41,6 +44,37 @@ async fn imported_go_round_trips_and_builds() {
     let reparsed = import_graph(&rendered[0].content);
     let rerendered = render_files(&reparsed);
     assert_eq!(rendered, rerendered);
+}
+
+#[tokio::test]
+async fn workspace_validation_uses_go_mod_and_embedded_assets() {
+    let files = vec![
+        RenderedFile {
+            path: "go.mod".to_string(),
+            content: "module example.com/bonhomme/workspace\n\ngo 1.22\n".to_string(),
+        },
+        RenderedFile {
+            path: "cmd/app/main.go".to_string(),
+            content: "package main\n\nimport _ \"example.com/bonhomme/workspace/internal/assets\"\n\nfunc main() {}\n".to_string(),
+        },
+        RenderedFile {
+            path: "internal/assets/assets.go".to_string(),
+            content: "package assets\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar Data string\n".to_string(),
+        },
+        RenderedFile {
+            path: "internal/assets/data.txt".to_string(),
+            content: "hello\n".to_string(),
+        },
+    ];
+    let go_files = files
+        .iter()
+        .filter(|file| file.path.ends_with(".go"))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    validate_go_files_with_workspace(&files, &go_files)
+        .await
+        .unwrap();
 }
 
 #[test]
@@ -198,6 +232,50 @@ fn import_allows_build_variant_methods_on_shared_receiver() {
     );
 }
 
+#[tokio::test]
+async fn named_non_struct_types_render_their_methods() {
+    let graph = import_graph(
+        "package engine\n\n\
+type configPresence map[string]bool\n\n\
+func (p configPresence) has(path string) bool {\n\
+\treturn p[path]\n\
+}\n",
+    );
+    let rendered = render_files(&graph);
+    let content = &rendered[0].content;
+
+    assert!(content.contains("type configPresence map[string]bool"));
+    assert!(content.contains("func (p configPresence) has(path string) bool"));
+    validate_go_files(&rendered).await.unwrap();
+}
+
+#[tokio::test]
+async fn methods_render_in_their_original_file_to_keep_imports_valid() {
+    let files = vec![
+        RenderedFile {
+            path: "types.go".to_string(),
+            content: "package engine\n\ntype Result struct{}\n".to_string(),
+        },
+        RenderedFile {
+            path: "json_output.go".to_string(),
+            content: "package engine\n\nimport \"encoding/json\"\n\nfunc (result Result) MarshalJSON() ([]byte, error) {\n\treturn json.Marshal(struct{}{})\n}\n".to_string(),
+        },
+    ];
+    let graph = materialize_operations(import_go_files(&files).unwrap());
+    let rendered = render_files(&graph);
+    let by_path = rendered
+        .iter()
+        .map(|file| (file.path.as_str(), file.content.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    assert!(!by_path["types.go"].contains("MarshalJSON"));
+    assert!(by_path["json_output.go"].contains("import \"encoding/json\""));
+    assert!(by_path["json_output.go"].contains("func (result Result) MarshalJSON()"));
+    validate_go_files_with_workspace(&files, &rendered)
+        .await
+        .unwrap();
+}
+
 fn sample_source() -> &'static str {
     r#"
 package order
@@ -274,7 +352,8 @@ type Handler interface {\n\
 fn doc_only_edit_is_recovered_as_update() {
     // P2: editing ONLY a function's godoc (body/signature unchanged) must produce an UpdateSymbol
     // carrying the new doc, so the change is not silently lost on write-back.
-    let mut operations = import_operations("package order\n\n// Old summary.\nfunc Run() {\n\treturn\n}\n");
+    let mut operations =
+        import_operations("package order\n\n// Old summary.\nfunc Run() {\n\treturn\n}\n");
     let graph = materialize_operations(operations.clone());
     let run_id = graph.find_symbol("Run")[0].id;
 

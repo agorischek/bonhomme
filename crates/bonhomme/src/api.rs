@@ -13,7 +13,7 @@ use axum::{
 };
 use bonhomme_engine::{DEFAULT_DATABASE_URL, MergeResult, Storage};
 use serde::Serialize;
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::Path as StdPath};
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
@@ -26,11 +26,15 @@ struct AppState {
 pub async fn serve(
     database_url: Option<String>,
     config: &crate::config::Config,
+    root: &StdPath,
     addr: SocketAddr,
 ) -> Result<()> {
     let database_url = database_url.unwrap_or_else(|| DEFAULT_DATABASE_URL.to_string());
-    let storage =
-        Storage::connect(&database_url, crate::plugins::language_registry(config)).await?;
+    let storage = Storage::connect(
+        &database_url,
+        crate::plugins::language_registry(config, root),
+    )
+    .await?;
     storage.migrate().await?;
 
     let app = router(storage);

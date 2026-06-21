@@ -486,6 +486,26 @@ impl StorageBackend for PostgresBackend {
         Ok(row.map(|row| (row.graph, row.rendered_files)))
     }
 
+    async fn get_graph_cache_graph(
+        &self,
+        branch_id: Uuid,
+        operation_count: i64,
+        fingerprint: &str,
+    ) -> Result<Option<Value>> {
+        let row = sqlx::query_scalar::<_, Value>(
+            r#"
+            SELECT graph FROM graph_cache
+            WHERE branch_id = $1 AND operation_count = $2 AND operation_fingerprint = $3
+            "#,
+        )
+        .bind(branch_id)
+        .bind(operation_count)
+        .bind(fingerprint)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     async fn store_graph_cache(
         &self,
         repository_id: Uuid,

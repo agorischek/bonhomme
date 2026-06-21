@@ -216,7 +216,13 @@ fn diff_classes(
                 }
             }
         }
-        diff_properties(path, parent_id, original_class, modified_class, &mut operations);
+        diff_properties(
+            path,
+            parent_id,
+            original_class,
+            modified_class,
+            &mut operations,
+        );
     }
 
     Ok(operations)

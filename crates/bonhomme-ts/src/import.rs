@@ -77,9 +77,14 @@ fn import_top_level_statement(
     docs: &DocComments,
 ) -> Result<Option<ParsedTopLevel>> {
     let entry = match statement {
-        Statement::ClassDeclaration(class) => {
-            import_class(file, file_id, class, class.span.start as usize, class.span, docs)
-        }
+        Statement::ClassDeclaration(class) => import_class(
+            file,
+            file_id,
+            class,
+            class.span.start as usize,
+            class.span,
+            docs,
+        ),
         Statement::FunctionDeclaration(function) => import_function(
             file,
             file_id,

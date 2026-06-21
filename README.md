@@ -76,7 +76,20 @@ You can also configure a TypeScript-compatible compiler per repo in `bonhomme.to
 typescript = "tsgo" # or a path to tsc
 ```
 
+Relative toolchain paths are resolved from the repo root containing `bonhomme.toml`, so a repo can
+point at an already-installed local compiler such as `docs/node_modules/.bin/tsc`.
+
 `BONHOMME_TSC` takes precedence over `[toolchain].typescript`; `[toolchain].tsc` is accepted as an alias.
+
+Toolchain validation is an explicit confidence gate, not required for session startup. By default,
+`bonhomme session start` checks semantic graph invariants and skips language build/typecheck gates.
+Run `bonhomme session start --validate toolchain` when you want startup to fail unless the rendered
+projection passes language toolchains. Repos can opt into that policy:
+
+```toml
+[validation]
+session_start = "toolchain" # default: "none"
+```
 
 Go support uses the local Go toolchain for parsing, `gofmt`, and validation. Set `BONHOMME_GO` if `go` is not on `PATH`.
 

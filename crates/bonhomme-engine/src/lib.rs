@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 use backend::StorageBackend;
 pub use models::{
-    Attachment, CacheStatus, MaterializedBranch, MergeResult, PendingSourceFileSnapshot,
-    SourceFileSnapshot, StoredSlice,
+    Attachment, CacheStatus, MaterializedBranch, MaterializedGraph, MergeResult,
+    PendingSourceFileSnapshot, SourceFileSnapshot, StoredSlice,
 };
 
 pub const DEFAULT_DATABASE_URL: &str = "postgres://bonhomme:bonhomme@localhost:54329/bonhomme";

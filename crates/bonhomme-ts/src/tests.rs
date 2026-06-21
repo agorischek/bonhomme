@@ -448,7 +448,10 @@ export class Svc {
 ";
     let content = render_files(&import_graph(source))[0].content.clone();
 
-    assert!(content.contains("* A service."), "class doc dropped: {content}");
+    assert!(
+        content.contains("* A service."),
+        "class doc dropped: {content}"
+    );
     assert!(
         content.contains("* Returns a label."),
         "method doc dropped: {content}"
@@ -459,8 +462,13 @@ export class Svc {
     );
     // The method's doc must render above the method (inside the class), not float into preamble.
     let method = content.find("label(id").expect("method rendered");
-    let method_doc = content.find("Returns a label").expect("method doc rendered");
-    assert!(method_doc < method, "method doc should render above its method");
+    let method_doc = content
+        .find("Returns a label")
+        .expect("method doc rendered");
+    assert!(
+        method_doc < method,
+        "method doc should render above its method"
+    );
 }
 
 fn import_graph(content: &str) -> SemanticGraph {

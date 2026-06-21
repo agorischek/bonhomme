@@ -13,6 +13,7 @@ bonhomme-rust.workspace = true
 bonhomme-python.workspace = true
 bonhomme-csharp.workspace = true
 bonhomme-elixir.workspace = true
+bonhomme-markdown.workspace = true
 bonhomme-fallback.workspace = true
 bonhomme-engine.workspace = true
 anyhow.workspace = true

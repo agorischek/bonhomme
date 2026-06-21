@@ -100,14 +100,15 @@ func parseGenDecl(input parsedInput, decl *ast.GenDecl) []declaration {
 	if decl.Tok == token.IMPORT {
 		return nil
 	}
+	if decl.Tok == token.CONST || decl.Tok == token.VAR {
+		return parseValueGenDecl(input, decl)
+	}
 
 	var declarations []declaration
 	for _, spec := range decl.Specs {
 		switch spec := spec.(type) {
 		case *ast.TypeSpec:
 			declarations = append(declarations, parseTypeSpec(input, decl, spec))
-		case *ast.ValueSpec:
-			declarations = append(declarations, parseValueSpec(input, decl, spec)...)
 		}
 	}
 	return declarations
@@ -136,23 +137,46 @@ func parseTypeSpec(input parsedInput, decl *ast.GenDecl, spec *ast.TypeSpec) dec
 		return declaration{
 			Kind:        "type",
 			Name:        spec.Name.Name,
-			Declaration: strings.TrimSpace(span(input, spec.Pos(), spec.End())),
+			Declaration: "type " + strings.TrimSpace(span(input, spec.Pos(), spec.End())),
 			Doc:         doc,
 		}
 	}
 }
 
-func parseValueSpec(input parsedInput, decl *ast.GenDecl, spec *ast.ValueSpec) []declaration {
+func parseValueGenDecl(input parsedInput, decl *ast.GenDecl) []declaration {
 	kind := strings.ToLower(decl.Tok.String())
-	doc := declDoc(spec.Doc, decl)
-	declarations := make([]declaration, 0, len(spec.Names))
-	for _, name := range spec.Names {
-		declarations = append(declarations, declaration{
-			Kind:        kind,
-			Name:        name.Name,
-			Declaration: strings.TrimSpace(span(input, decl.Pos(), decl.End())),
-			Doc:         doc,
-		})
+	declarations := []declaration{}
+	grouped := decl.Lparen.IsValid()
+	groupDeclaration := strings.TrimSpace(span(input, decl.Pos(), decl.End()))
+	emittedDeclaration := false
+
+	for _, spec := range decl.Specs {
+		valueSpec, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			continue
+		}
+		doc := declDoc(valueSpec.Doc, decl)
+		specDeclaration := ""
+		if grouped {
+			if !emittedDeclaration {
+				specDeclaration = groupDeclaration
+				emittedDeclaration = true
+			}
+		} else {
+			specDeclaration = kind + " " + strings.TrimSpace(span(input, valueSpec.Pos(), valueSpec.End()))
+		}
+		for index, name := range valueSpec.Names {
+			declarationText := specDeclaration
+			if index > 0 {
+				declarationText = ""
+			}
+			declarations = append(declarations, declaration{
+				Kind:        kind,
+				Name:        name.Name,
+				Declaration: declarationText,
+				Doc:         doc,
+			})
+		}
 	}
 	return declarations
 }

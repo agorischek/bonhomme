@@ -1,12 +1,14 @@
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use bonhomme_core::{BlobHandler, Handler, HandlerRegistry, LanguagePlugin};
 use bonhomme_csharp::CSharpPlugin;
 use bonhomme_elixir::ElixirPlugin;
-use bonhomme_fallback::{
-    JsonHandler, MarkdownHandler, TomlHandler, TreeSitterHandler, YamlHandler,
-};
+use bonhomme_fallback::{JsonHandler, TomlHandler, TreeSitterHandler, YamlHandler};
 use bonhomme_go::GoPlugin;
+use bonhomme_markdown::MarkdownPlugin;
 use bonhomme_python::PythonPlugin;
 use bonhomme_rust::RustPlugin;
 use bonhomme_ts::TypeScriptPlugin;
@@ -20,22 +22,26 @@ use crate::config::Config;
 /// Order is priority order — the most specific handlers claim first, and the blob handler is
 /// terminal, claiming everything as the universal floor. New language plugins slot in ahead of the
 /// blob handler.
-pub fn language_registry(config: &Config) -> Arc<dyn LanguagePlugin> {
-    Arc::new(handler_registry(config))
+pub fn language_registry(config: &Config, root: &Path) -> Arc<dyn LanguagePlugin> {
+    Arc::new(handler_registry(config, root))
 }
 
 /// The concrete registry behind [`language_registry`]. Kept separate so tests can call
 /// [`HandlerRegistry`] methods (e.g. the handler breakdown) that the `dyn LanguagePlugin` view hides.
-fn handler_registry(config: &Config) -> HandlerRegistry {
+fn handler_registry(config: &Config, root: &Path) -> HandlerRegistry {
     HandlerRegistry::new(vec![
-        Arc::new(TypeScriptPlugin::with_compiler(typescript_compiler(config))) as Arc<dyn Handler>,
+        Arc::new(TypeScriptPlugin::with_compiler(typescript_compiler(
+            config, root,
+        ))) as Arc<dyn Handler>,
         Arc::new(GoPlugin),
         Arc::new(RustPlugin),
-        Arc::new(PythonPlugin::with_interpreter(python_interpreter(config))),
-        Arc::new(CSharpPlugin::with_dotnet(dotnet_binary(config))),
-        Arc::new(ElixirPlugin::with_compiler(elixir_compiler(config))),
+        Arc::new(PythonPlugin::with_interpreter(python_interpreter(
+            config, root,
+        ))),
+        Arc::new(CSharpPlugin::with_dotnet(dotnet_binary(config, root))),
+        Arc::new(ElixirPlugin::with_compiler(elixir_compiler(config, root))),
         Arc::new(JsonHandler),
-        Arc::new(MarkdownHandler),
+        Arc::new(MarkdownPlugin),
         Arc::new(TomlHandler),
         Arc::new(YamlHandler),
         // Tree-sitter is the broad structural-lite tier for grammars that have not graduated to a
@@ -45,32 +51,42 @@ fn handler_registry(config: &Config) -> HandlerRegistry {
     ])
 }
 
-fn typescript_compiler(config: &Config) -> Option<String> {
-    config
-        .toolchain
-        .get("typescript")
-        .or_else(|| config.toolchain.get("tsc"))
-        .cloned()
+fn typescript_compiler(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["typescript", "tsc"])
 }
 
-fn python_interpreter(config: &Config) -> Option<String> {
-    config
-        .toolchain
-        .get("python")
-        .or_else(|| config.toolchain.get("python3"))
-        .cloned()
+fn python_interpreter(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["python", "python3"])
 }
 
-fn dotnet_binary(config: &Config) -> Option<String> {
-    config.toolchain.get("dotnet").cloned()
+fn dotnet_binary(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["dotnet"])
 }
 
-fn elixir_compiler(config: &Config) -> Option<String> {
-    config
-        .toolchain
-        .get("elixirc")
-        .or_else(|| config.toolchain.get("elixir"))
-        .cloned()
+fn elixir_compiler(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["elixirc", "elixir"])
+}
+
+fn configured_toolchain(config: &Config, root: &Path, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| config.toolchain.get(*key))
+        .map(|command| resolve_path_like_command(command, root))
+}
+
+fn resolve_path_like_command(command: &str, root: &Path) -> String {
+    if !is_path_like(command) {
+        return command.to_string();
+    }
+    let path = PathBuf::from(command);
+    if path.is_absolute() {
+        command.to_string()
+    } else {
+        root.join(path).display().to_string()
+    }
+}
+
+fn is_path_like(command: &str) -> bool {
+    command.starts_with('.') || command.contains('/') || command.contains('\\')
 }
 
 #[cfg(test)]
@@ -115,7 +131,7 @@ mod tests {
 
     #[test]
     fn polyglot_repo_routes_renders_and_round_trips_every_tier() {
-        let registry = handler_registry(&Config::default());
+        let registry = handler_registry(&Config::default(), Path::new("/repo"));
         let binary = encode_binary(&[0xFFu8, 0x00, 0x10, 0xAB]);
         let files = vec![
             rf(
@@ -179,14 +195,18 @@ mod tests {
         // documentation convention. A plugin that parses code but forgets to model its doc comments
         // silently loses API documentation (TypeScript TSDoc and Go godoc both did) — this fails
         // loudly so a future plugin (or a regression) cannot ship that gap unseen.
-        let registry = handler_registry(&Config::default());
+        let registry = handler_registry(&Config::default(), Path::new("/repo"));
         let cases = [
             (
                 "a.ts",
                 "/** ts-doc-marker */\nexport function f(): number {\n  return 1;\n}\n",
                 "ts-doc-marker",
             ),
-            ("a.go", "package p\n\n// go-doc-marker\nfunc F() {}\n", "go-doc-marker"),
+            (
+                "a.go",
+                "package p\n\n// go-doc-marker\nfunc F() {}\n",
+                "go-doc-marker",
+            ),
             (
                 "a.rs",
                 "/// rs-doc-marker\npub fn answer() -> usize {\n    1\n}\n",
@@ -210,7 +230,9 @@ mod tests {
         ];
 
         let files: Vec<RenderedFile> = cases.iter().map(|(path, src, _)| rf(path, src)).collect();
-        let operations = registry.import(&files).expect("polyglot doc import succeeds");
+        let operations = registry
+            .import(&files)
+            .expect("polyglot doc import succeeds");
         let graph = graph_from(&operations);
 
         // Guard: each fixture must parse *structurally*, not degrade to blob — otherwise docs would
@@ -243,7 +265,7 @@ mod tests {
 
     #[test]
     fn unparseable_structured_file_degrades_to_blob() {
-        let registry = handler_registry(&Config::default());
+        let registry = handler_registry(&Config::default(), Path::new("/repo"));
         // A `.json` extension but malformed contents: the JSON handler errors, and the router
         // degrades just this file to the blob floor rather than failing the whole import.
         let operations = registry
@@ -257,14 +279,20 @@ mod tests {
     fn typescript_toolchain_comes_from_config() {
         let config = config_with_toolchain("typescript", "tsgo");
 
-        assert_eq!(typescript_compiler(&config).as_deref(), Some("tsgo"));
+        assert_eq!(
+            typescript_compiler(&config, Path::new("/repo")).as_deref(),
+            Some("tsgo")
+        );
     }
 
     #[test]
     fn tsc_toolchain_key_is_an_alias_for_typescript() {
         let config = config_with_toolchain("tsc", "custom-tsc");
 
-        assert_eq!(typescript_compiler(&config).as_deref(), Some("custom-tsc"));
+        assert_eq!(
+            typescript_compiler(&config, Path::new("/repo")).as_deref(),
+            Some("custom-tsc")
+        );
     }
 
     #[test]
@@ -274,41 +302,69 @@ mod tests {
             .toolchain
             .insert("typescript".to_string(), "tsgo".to_string());
 
-        assert_eq!(typescript_compiler(&config).as_deref(), Some("tsgo"));
+        assert_eq!(
+            typescript_compiler(&config, Path::new("/repo")).as_deref(),
+            Some("tsgo")
+        );
+    }
+
+    #[test]
+    fn path_like_toolchain_values_are_resolved_from_repo_root() {
+        let config = config_with_toolchain("typescript", "docs/node_modules/.bin/tsc");
+
+        assert_eq!(
+            typescript_compiler(&config, Path::new("/repo")).as_deref(),
+            Some("/repo/docs/node_modules/.bin/tsc")
+        );
     }
 
     #[test]
     fn python_toolchain_comes_from_config() {
         let config = config_with_toolchain("python", "/opt/python");
 
-        assert_eq!(python_interpreter(&config).as_deref(), Some("/opt/python"));
+        assert_eq!(
+            python_interpreter(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/python")
+        );
     }
 
     #[test]
     fn python3_toolchain_key_is_an_alias_for_python() {
         let config = config_with_toolchain("python3", "/opt/python3");
 
-        assert_eq!(python_interpreter(&config).as_deref(), Some("/opt/python3"));
+        assert_eq!(
+            python_interpreter(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/python3")
+        );
     }
 
     #[test]
     fn dotnet_toolchain_comes_from_config() {
         let config = config_with_toolchain("dotnet", "/opt/dotnet");
 
-        assert_eq!(dotnet_binary(&config).as_deref(), Some("/opt/dotnet"));
+        assert_eq!(
+            dotnet_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/dotnet")
+        );
     }
 
     #[test]
     fn elixirc_toolchain_comes_from_config() {
         let config = config_with_toolchain("elixirc", "/opt/elixirc");
 
-        assert_eq!(elixir_compiler(&config).as_deref(), Some("/opt/elixirc"));
+        assert_eq!(
+            elixir_compiler(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/elixirc")
+        );
     }
 
     #[test]
     fn elixir_toolchain_key_is_an_alias_for_elixirc() {
         let config = config_with_toolchain("elixir", "/opt/elixir");
 
-        assert_eq!(elixir_compiler(&config).as_deref(), Some("/opt/elixir"));
+        assert_eq!(
+            elixir_compiler(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/elixir")
+        );
     }
 }

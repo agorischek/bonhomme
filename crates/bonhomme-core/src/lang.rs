@@ -78,6 +78,21 @@ pub struct Slice {
 /// `async fn`) so `LanguagePlugin` stays object-safe and can be held as `dyn LanguagePlugin`.
 pub type ValidateFuture<'a> = Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>>;
 
+/// Repo-shaped validation input. `files` is the subset owned by the current handler; `all_files` is
+/// the full rendered repository tree. Real language toolchains often need workspace files they do
+/// not semantically own, such as `go.mod`, lockfiles, config files, or embedded assets.
+#[derive(Clone, Copy, Debug)]
+pub struct ValidationContext<'a> {
+    pub all_files: &'a [RenderedFile],
+    pub files: &'a [RenderedFile],
+}
+
+impl<'a> ValidationContext<'a> {
+    pub fn new(all_files: &'a [RenderedFile], files: &'a [RenderedFile]) -> Self {
+        Self { all_files, files }
+    }
+}
+
 /// The pluggable boundary between the language-agnostic operation/graph core and a concrete
 /// language. The core (operations, semantic graph, replay, validation, merge analysis) and the
 /// storage/merge engine know nothing about any particular language; they render, validate, import,
@@ -118,6 +133,12 @@ pub trait LanguagePlugin: Send + Sync {
     /// Validate rendered files with the language toolchain (for TypeScript, the compiler). Acts as
     /// an external validator for the rendered projection after replay and merge.
     fn validate<'a>(&'a self, files: &'a [RenderedFile]) -> ValidateFuture<'a>;
+
+    /// Validate with whole-repo context. Handlers that only need their own files can use the
+    /// default; workspace-aware handlers can read `context.all_files`.
+    fn validate_with_context<'a>(&'a self, context: ValidationContext<'a>) -> ValidateFuture<'a> {
+        self.validate(context.files)
+    }
 }
 
 #[cfg(test)]

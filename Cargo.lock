@@ -381,6 +381,7 @@ dependencies = [
  "bonhomme-engine",
  "bonhomme-fallback",
  "bonhomme-go",
+ "bonhomme-markdown",
  "bonhomme-python",
  "bonhomme-rust",
  "bonhomme-ts",
@@ -483,6 +484,18 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "bonhomme-markdown"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bonhomme-core",
+ "chrono",
+ "pulldown-cmark",
+ "serde_json",
  "uuid",
 ]
 

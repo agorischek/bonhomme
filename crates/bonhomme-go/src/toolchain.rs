@@ -1,6 +1,6 @@
 use crate::model::{ParseRequest, ParsedPackage};
 use anyhow::{Context, Result, bail};
-use bonhomme_core::{RenderedFile, safe_relative_path};
+use bonhomme_core::{RenderedFile, decode_binary, safe_relative_path};
 use std::{
     collections::{BTreeMap, hash_map::DefaultHasher},
     fs::{self as std_fs, Metadata},
@@ -38,6 +38,24 @@ pub(crate) fn format_go_source(source: &str) -> Result<String> {
 }
 
 pub(crate) async fn validate_go_files(files: &[RenderedFile]) -> Result<()> {
+    validate_go_files_in_synthetic_module(files).await
+}
+
+pub(crate) async fn validate_go_files_with_workspace(
+    all_files: &[RenderedFile],
+    go_files: &[RenderedFile],
+) -> Result<()> {
+    if go_files.is_empty() {
+        return Ok(());
+    }
+    if all_files.iter().any(|file| file.path == "go.mod") {
+        validate_go_workspace(all_files).await
+    } else {
+        validate_go_files_in_synthetic_module(go_files).await
+    }
+}
+
+async fn validate_go_files_in_synthetic_module(files: &[RenderedFile]) -> Result<()> {
     if files.is_empty() {
         return Ok(());
     }
@@ -50,20 +68,8 @@ pub(crate) async fn validate_go_files(files: &[RenderedFile]) -> Result<()> {
     )
     .await?;
 
-    for file in files {
-        let path = root.join(safe_relative_path(&file.path)?);
-        if let Some(parent) = path.parent() {
-            tokio_fs::create_dir_all(parent).await?;
-        }
-        tokio_fs::write(path, &file.content).await?;
-    }
-
-    let mut command = TokioCommand::new(go_binary());
-    command.arg("build").arg("./...").current_dir(&root);
-    let output = time::timeout(std::time::Duration::from_secs(30), command.output())
-        .await
-        .context("go build timed out")?
-        .context("failed to run go build")?;
+    write_rendered_tree(&root, files).await?;
+    let output = run_go_build(&root).await?;
 
     let _ = tokio_fs::remove_dir_all(&root).await;
 
@@ -74,6 +80,47 @@ pub(crate) async fn validate_go_files(files: &[RenderedFile]) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn validate_go_workspace(files: &[RenderedFile]) -> Result<()> {
+    let root = std::env::temp_dir().join(format!("bonhomme-go-{}", Uuid::new_v4()));
+    tokio_fs::create_dir_all(&root).await?;
+    write_rendered_tree(&root, files).await?;
+    let output = run_go_build(&root).await?;
+
+    let _ = tokio_fs::remove_dir_all(&root).await;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        bail!("go build rejected rendered workspace: {stderr}{stdout}");
+    }
+
+    Ok(())
+}
+
+async fn write_rendered_tree(root: &Path, files: &[RenderedFile]) -> Result<()> {
+    for file in files {
+        let path = root.join(safe_relative_path(&file.path)?);
+        if let Some(parent) = path.parent() {
+            tokio_fs::create_dir_all(parent).await?;
+        }
+        if let Some(bytes) = decode_binary(&file.content) {
+            tokio_fs::write(path, bytes).await?;
+        } else {
+            tokio_fs::write(path, &file.content).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn run_go_build(root: &Path) -> Result<std::process::Output> {
+    let mut command = TokioCommand::new(go_binary());
+    command.arg("build").arg("./...").current_dir(root);
+    time::timeout(std::time::Duration::from_secs(30), command.output())
+        .await
+        .context("go build timed out")?
+        .context("failed to run go build")
 }
 
 fn run_helper(command_name: &str, input: &[u8]) -> Result<Vec<u8>> {

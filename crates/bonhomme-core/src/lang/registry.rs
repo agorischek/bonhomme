@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
-use super::{LanguagePlugin, RenderedFile, Slice, ValidateFuture};
+use super::{LanguagePlugin, RenderedFile, Slice, ValidateFuture, ValidationContext};
 use crate::core::{Operation, ReferenceNode, SemanticGraph, SymbolNode, metadata_string};
 
 pub use source::read_source_files;
@@ -301,7 +301,9 @@ impl LanguagePlugin for HandlerRegistry {
         let subsets = self.partition_by_claims(files);
         Box::pin(async move {
             for (index, subset) in &subsets {
-                self.handlers[*index].validate(subset).await?;
+                self.handlers[*index]
+                    .validate_with_context(ValidationContext::new(files, subset))
+                    .await?;
             }
             Ok(())
         })

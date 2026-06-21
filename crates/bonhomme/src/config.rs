@@ -25,6 +25,10 @@ pub struct Config {
     pub format: BTreeMap<String, String>,
     /// Git integration mode — gates write-back into the working tree (`bonhomme session land`).
     pub git: GitConfig,
+    /// Validation policy for workflow entry points. Heavy language toolchain checks are useful, but
+    /// should be opt-in for session startup because real repos may need dependencies, services, or
+    /// generated artifacts before they build.
+    pub validation: ValidationConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -39,6 +43,35 @@ pub struct StorageConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct GitConfig {
     pub write_back: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ValidationConfig {
+    pub session_start: SessionValidationMode,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionValidationMode {
+    /// Check semantic graph invariants only; skip language toolchain build/typecheck gates.
+    #[default]
+    None,
+    /// Also run each language plugin's toolchain validator over the rendered projection.
+    Toolchain,
+}
+
+impl SessionValidationMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Toolchain => "toolchain",
+        }
+    }
+
+    pub fn toolchain_enabled(self) -> bool {
+        matches!(self, Self::Toolchain)
+    }
 }
 
 /// Walk up from `start` to find the project root and load its config. The root is the nearest
@@ -136,6 +169,22 @@ mod tests {
         assert_eq!(
             config.toolchain.get("typescript").map(String::as_str),
             Some("tsgo")
+        );
+    }
+
+    #[test]
+    fn session_start_validation_defaults_to_none() {
+        let config = Config::default();
+        assert_eq!(config.validation.session_start, SessionValidationMode::None);
+    }
+
+    #[test]
+    fn parses_validation_section() {
+        let config: Config =
+            toml::from_str("[validation]\nsession_start = \"toolchain\"\n").unwrap();
+        assert_eq!(
+            config.validation.session_start,
+            SessionValidationMode::Toolchain
         );
     }
 

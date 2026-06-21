@@ -132,6 +132,14 @@ pub(crate) trait StorageBackend: Send + Sync {
         operation_count: i64,
         fingerprint: &str,
     ) -> Result<Option<(Value, Value)>>;
+    /// Cached graph JSON without the rendered-file projection. This keeps read paths that only
+    /// need symbols from paying to transfer and deserialize a large `rendered_files` blob.
+    async fn get_graph_cache_graph(
+        &self,
+        branch_id: Uuid,
+        operation_count: i64,
+        fingerprint: &str,
+    ) -> Result<Option<Value>>;
     async fn store_graph_cache(
         &self,
         repository_id: Uuid,

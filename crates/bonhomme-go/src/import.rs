@@ -226,7 +226,10 @@ fn with_doc(metadata: serde_json::Value, declaration: &Declaration) -> serde_jso
 /// Attach a raw godoc block as `doc` metadata when present and non-empty. Shared by declarations,
 /// struct fields, and interface methods so each documentable node renders its doc back. Also used by
 /// the recover path so an edited slice's docs survive (and doc-only edits become `UpdateSymbol`s).
-pub(crate) fn metadata_with_doc(mut metadata: serde_json::Value, doc: Option<&str>) -> serde_json::Value {
+pub(crate) fn metadata_with_doc(
+    mut metadata: serde_json::Value,
+    doc: Option<&str>,
+) -> serde_json::Value {
     if let Some(doc) = doc.filter(|doc| !doc.is_empty()) {
         metadata["doc"] = json!(doc);
     }

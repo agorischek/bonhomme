@@ -61,6 +61,7 @@ fn render_file(graph: &SemanticGraph, file: &SymbolNode) -> RenderedFile {
     for child in graph.children_of(file.id) {
         render_top_level_symbol(graph, child, &mut content);
     }
+    render_file_methods(graph, &path, &mut content);
 
     let content = format_go_source(&content).unwrap_or(content);
     RenderedFile { path, content }
@@ -71,7 +72,6 @@ fn render_top_level_symbol(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut
         "struct" => render_struct(graph, symbol, out),
         "interface" => render_interface(graph, symbol, out),
         "function" => render_function(symbol, out),
-        "method" => render_function(symbol, out),
         "const" | "var" | "type" => render_declaration(symbol, out),
         _ => {}
     }
@@ -94,12 +94,6 @@ fn render_struct(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut String) {
         }
     }
     out.push_str("}\n\n");
-
-    for child in graph.children_of(symbol.id) {
-        if child.kind == "method" && child.body.is_some() {
-            render_function(child, out);
-        }
-    }
 }
 
 fn render_interface(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut String) {
@@ -142,6 +136,27 @@ fn render_declaration(symbol: &SymbolNode, out: &mut String) {
         render_doc(symbol, out);
         out.push_str(declaration.trim());
         out.push_str("\n\n");
+    }
+}
+
+fn render_file_methods(graph: &SemanticGraph, path: &str, out: &mut String) {
+    let mut methods = graph
+        .symbols
+        .values()
+        .filter(|symbol| {
+            symbol.kind == "method"
+                && symbol.body.is_some()
+                && metadata_string(&symbol.metadata, "path").as_deref() == Some(path)
+        })
+        .collect::<Vec<_>>();
+    methods.sort_by(|a, b| {
+        a.ordinal
+            .cmp(&b.ordinal)
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    for method in methods {
+        render_function(method, out);
     }
 }
 
