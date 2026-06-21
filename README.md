@@ -10,14 +10,18 @@ See [docs/spec-coverage.md](docs/spec-coverage.md) for the current implementatio
 
 ```sh
 cp .env.example .env
-cargo run -p bonhomme -- import --repo bonhomme --path examples/typescript-basic --reset
-cargo run -p bonhomme -- explore --repo bonhomme --open
+cargo run -p bonhomme -- import --path examples/typescript-basic --reset
+cargo run -p bonhomme -- explore --open
 ```
 
 `bonhomme explore` is the core lightweight explorer. It runs one local Axum instance for the
 repository in the current checkout, discovers `bonhomme.toml` from that repo root, and writes the
 last started URL to `.bonhomme/explorer.json`. If no storage URL is configured, bonhomme uses the
 project-local embedded Turso database at `.bonhomme/bonhomme.db`.
+
+Repo-scoped commands infer the logical repository name from the active session manifest, then the
+current repo root directory. Pass `--repo` only when addressing a different logical repository in
+the same database.
 
 The React demo is still available as a development dashboard for simulations:
 

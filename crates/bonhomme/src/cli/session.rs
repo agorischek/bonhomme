@@ -124,6 +124,12 @@ async fn read_session_manifest(root: &Path) -> Result<Option<SessionManifest>> {
     }
 }
 
+pub(super) async fn active_repository_name(root: &Path) -> Result<Option<String>> {
+    Ok(read_session_manifest(root)
+        .await?
+        .map(|manifest| manifest.repository))
+}
+
 async fn write_session_manifest(root: &Path, manifest: &SessionManifest) -> Result<()> {
     let path = manifest_path(root);
     if let Some(parent) = path.parent() {

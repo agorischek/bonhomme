@@ -31,10 +31,11 @@ pub(super) fn select_dependents(graph: &SemanticGraph, symbol_id: uuid::Uuid) ->
 /// it relates to (callers/callees/dependencies/dependents), passed as a graph method.
 pub(super) async fn print_related_symbols(
     storage: &Storage,
+    repo: &str,
     args: &FindSymbolArgs,
     select: fn(&SemanticGraph, uuid::Uuid) -> Vec<&SymbolNode>,
 ) -> Result<()> {
-    let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
+    let materialized = storage.materialize_branch(repo, &args.branch).await?;
     let symbol = resolve_symbol(&materialized.graph, &args.name)?;
     let related = select(&materialized.graph, symbol.id);
     println!("{}", serde_json::to_string_pretty(&related)?);

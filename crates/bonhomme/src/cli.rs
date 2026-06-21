@@ -5,7 +5,6 @@ mod session;
 mod slice_audit;
 
 use crate::api;
-use crate::demo::DEMO_REPOSITORY;
 use crate::explorer;
 use anyhow::{Context, Result};
 use bonhomme_engine::Storage;
@@ -93,14 +92,16 @@ struct ExploreArgs {
 
 #[derive(Args)]
 struct InitArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    name: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    name: Option<String>,
 }
 
 #[derive(Args)]
 struct ImportArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long, default_value = "main")]
     branch: String,
     #[arg(long)]
@@ -119,8 +120,9 @@ enum BranchCommand {
 
 #[derive(Args)]
 struct BranchCreateArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long)]
     name: String,
     #[arg(long, default_value = "main")]
@@ -134,8 +136,9 @@ enum TaskCommand {
 
 #[derive(Args)]
 struct TaskCreateArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long)]
     title: String,
 }
@@ -148,8 +151,9 @@ enum SliceCommand {
 
 #[derive(Args)]
 struct SliceCreateArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long, default_value = "main")]
     branch: String,
     #[arg(long)]
@@ -158,8 +162,9 @@ struct SliceCreateArgs {
 
 #[derive(Args)]
 struct SliceApplyArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long, default_value = "main")]
     branch: String,
     #[arg(long, default_value = "Apply edited semantic slice")]
@@ -176,8 +181,9 @@ struct SliceApplyArgs {
 
 #[derive(Args)]
 struct MergeArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long)]
     source: String,
     #[arg(long, default_value = "main")]
@@ -186,16 +192,18 @@ struct MergeArgs {
 
 #[derive(Args)]
 struct BranchRefArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long, default_value = "main")]
     branch: String,
 }
 
 #[derive(Args)]
 struct RenderArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long, default_value = "main")]
     branch: String,
     #[arg(long, default_value = "rendered")]
@@ -298,8 +306,9 @@ enum QueryCommand {
 
 #[derive(Args)]
 struct FindSymbolArgs {
-    #[arg(long, default_value = DEMO_REPOSITORY)]
-    repo: String,
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
     #[arg(long, default_value = "main")]
     branch: String,
     #[arg(long)]
@@ -364,7 +373,7 @@ pub async fn run() -> Result<()> {
             let storage =
                 Storage::connect(&database_url, crate::plugins::language_registry(&config)).await?;
             storage.migrate().await?;
-            run_storage_command(storage, command).await
+            run_storage_command(storage, command, &root).await
         }
     }
 }

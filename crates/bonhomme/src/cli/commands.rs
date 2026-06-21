@@ -8,7 +8,10 @@ use bonhomme_core::{
 use bonhomme_engine::{MaterializedBranch, PendingSourceFileSnapshot, SourceFileSnapshot, Storage};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -23,6 +26,16 @@ use super::{
 };
 
 const IMPORTER_VERSION: &str = "source-snapshot-v1";
+
+async fn resolve_repository_name(root: &Path, explicit: Option<&str>) -> Result<String> {
+    if let Some(repo) = explicit {
+        return Ok(repo.to_string());
+    }
+    if let Some(repo) = super::session::active_repository_name(root).await? {
+        return Ok(repo);
+    }
+    super::default_repository_name(root)
+}
 
 /// Count root file symbols by their handler tag for the `import` report ("5 typescript, 3 blob").
 /// Files degraded to the blob handler show up as `blob`, so degradation is visible, never silent.
@@ -55,8 +68,9 @@ struct IncrementalPlan {
     deleted: Vec<SourceFileSnapshot>,
 }
 
-async fn run_import_command(storage: Storage, args: ImportArgs) -> Result<()> {
-    let (repository, branch) = import_target(&storage, &args).await?;
+async fn run_import_command(storage: Storage, args: ImportArgs, root: &Path) -> Result<()> {
+    let repository_name = resolve_repository_name(root, args.repo.as_deref()).await?;
+    let (repository, branch) = import_target(&storage, &args, &repository_name).await?;
     let files = storage.plugin().read_source_tree(&args.path)?;
     let existing_snapshots = if args.reset {
         Vec::new()
@@ -72,22 +86,31 @@ async fn run_import_command(storage: Storage, args: ImportArgs) -> Result<()> {
     if !args.reset && existing_snapshots.is_empty() && !existing_operations.is_empty() {
         bail!(
             "repository {} branch {} has no source file snapshots; run `bonhomme import --repo {} --branch {} --path {} --reset` once to seed incremental import state",
-            args.repo,
+            repository_name,
             args.branch,
-            args.repo,
+            repository_name,
             args.branch,
             args.path.display()
         );
     }
 
     let (appended, materialized, stats) = if existing_snapshots.is_empty() {
-        full_import(&storage, &repository, &branch, &args, &files).await?
+        full_import(
+            &storage,
+            &repository,
+            &branch,
+            &args,
+            &repository_name,
+            &files,
+        )
+        .await?
     } else {
         incremental_import(
             &storage,
             &repository,
             &branch,
             &args,
+            &repository_name,
             &files,
             &existing_snapshots,
         )
@@ -135,11 +158,15 @@ async fn run_import_command(storage: Storage, args: ImportArgs) -> Result<()> {
     Ok(())
 }
 
-async fn import_target(storage: &Storage, args: &ImportArgs) -> Result<(Repository, Branch)> {
+async fn import_target(
+    storage: &Storage,
+    args: &ImportArgs,
+    repository_name: &str,
+) -> Result<(Repository, Branch)> {
     let (repository, main) = if args.reset {
-        storage.reset_repository(&args.repo).await?
+        storage.reset_repository(repository_name).await?
     } else {
-        storage.init_repository(&args.repo).await?
+        storage.init_repository(repository_name).await?
     };
     if args.branch == main.name {
         return Ok((repository, main));
@@ -159,6 +186,7 @@ async fn full_import(
     repository: &Repository,
     branch: &Branch,
     args: &ImportArgs,
+    repository_name: &str,
     files: &[RenderedFile],
 ) -> Result<(Vec<OperationRecord>, MaterializedBranch, ImportStats)> {
     let operations = storage.plugin().import(files)?;
@@ -171,7 +199,9 @@ async fn full_import(
         operations,
     )
     .await?;
-    let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
+    let materialized = storage
+        .materialize_branch(repository_name, &args.branch)
+        .await?;
     let stats = ImportStats {
         mode: "full",
         files_scanned: files.len(),
@@ -187,11 +217,14 @@ async fn incremental_import(
     repository: &Repository,
     branch: &Branch,
     args: &ImportArgs,
+    repository_name: &str,
     files: &[RenderedFile],
     existing_snapshots: &[SourceFileSnapshot],
 ) -> Result<(Vec<OperationRecord>, MaterializedBranch, ImportStats)> {
     let plan = plan_incremental_import(files, existing_snapshots);
-    let base = storage.materialize_branch(&args.repo, &args.branch).await?;
+    let base = storage
+        .materialize_branch(repository_name, &args.branch)
+        .await?;
     let file_symbols = file_symbols_by_path(&base.graph);
     let changed_scope = plan
         .changed
@@ -234,7 +267,9 @@ async fn incremental_import(
     let materialized = if appended.is_empty() {
         base
     } else {
-        storage.materialize_branch(&args.repo, &args.branch).await?
+        storage
+            .materialize_branch(repository_name, &args.branch)
+            .await?
     };
     let stats = ImportStats {
         mode: "incremental",
@@ -488,13 +523,18 @@ fn merge_delete_and_recovered_operations(
         .collect()
 }
 
-pub(super) async fn run_storage_command(storage: Storage, command: Command) -> Result<()> {
+pub(super) async fn run_storage_command(
+    storage: Storage,
+    command: Command,
+    root: &Path,
+) -> Result<()> {
     match command {
         Command::Server(_) => unreachable!("handled before storage command dispatch"),
         Command::Explore(_) => unreachable!("handled before storage command dispatch"),
         Command::Session { .. } => unreachable!("handled before storage command dispatch"),
         Command::Init(args) => {
-            let (repository, branch) = storage.init_repository(&args.name).await?;
+            let name = resolve_repository_name(root, args.name.as_deref()).await?;
+            let (repository, branch) = storage.init_repository(&name).await?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(
@@ -502,10 +542,11 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
                 )?
             );
         }
-        Command::Import(args) => run_import_command(storage, args).await?,
+        Command::Import(args) => run_import_command(storage, args, root).await?,
         Command::Branch { command } => match command {
             BranchCommand::Create(args) => {
-                let repository = storage.repository_by_name(&args.repo).await?;
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                let repository = storage.repository_by_name(&repo).await?;
                 let branch = storage
                     .create_branch(repository.id, &args.name, &args.base)
                     .await?;
@@ -514,14 +555,16 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
         },
         Command::Task { command } => match command {
             TaskCommand::Create(args) => {
-                let repository = storage.repository_by_name(&args.repo).await?;
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                let repository = storage.repository_by_name(&repo).await?;
                 let task = storage.create_task(repository.id, &args.title).await?;
                 println!("{}", serde_json::to_string_pretty(&task)?);
             }
         },
         Command::Slice { command } => match command {
             SliceCommand::Create(args) => {
-                let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                let materialized = storage.materialize_branch(&repo, &args.branch).await?;
                 let root_symbols = if let Some(name) = args.symbol {
                     materialized
                         .graph
@@ -550,15 +593,13 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
                 println!("{}", serde_json::to_string_pretty(&slice)?);
             }
             SliceCommand::Apply(args) => {
-                let repository = storage.repository_by_name(&args.repo).await?;
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                let repository = storage.repository_by_name(&repo).await?;
                 let modified = read_rendered_files(&args.modified).await?;
                 let (branch, operations, audit_context) = if let Some(slice_id) = args.slice_id {
                     let stored_slice = storage.slice_by_id(slice_id).await?;
                     if stored_slice.repository_id != repository.id {
-                        bail!(
-                            "slice {slice_id} does not belong to repository {}",
-                            args.repo
-                        );
+                        bail!("slice {slice_id} does not belong to repository {}", repo);
                     }
                     let branch = storage.branch_by_id(stored_slice.branch_id).await?;
                     let branch_position_at_apply = storage
@@ -651,13 +692,15 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
             }
         },
         Command::Merge(args) => {
+            let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
             let result = storage
-                .merge_branch(&args.repo, &args.source, &args.target)
+                .merge_branch(&repo, &args.source, &args.target)
                 .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::Validate(args) => {
-            let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
+            let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+            let materialized = storage.materialize_branch(&repo, &args.branch).await?;
             materialized.graph.validate()?;
             storage.plugin().validate(&materialized.files).await?;
             println!(
@@ -669,7 +712,8 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
             );
         }
         Command::Render(args) => {
-            let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
+            let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+            let materialized = storage.materialize_branch(&repo, &args.branch).await?;
             for file in materialized.files {
                 let output_path = args.out.join(safe_relative_path(&file.path)?);
                 if let Some(parent) = output_path.parent() {
@@ -698,27 +742,33 @@ pub(super) async fn run_storage_command(storage: Storage, command: Command) -> R
         }
         Command::Query { command } => match command {
             QueryCommand::FindSymbol(args) => {
-                let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                let materialized = storage.materialize_branch(&repo, &args.branch).await?;
                 let symbols = materialized.graph.find_symbol(&args.name);
                 println!("{}", serde_json::to_string_pretty(&symbols)?);
             }
             QueryCommand::FindReferences(args) => {
-                let materialized = storage.materialize_branch(&args.repo, &args.branch).await?;
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                let materialized = storage.materialize_branch(&repo, &args.branch).await?;
                 let symbol = resolve_symbol(&materialized.graph, &args.name)?;
                 let references = materialized.graph.find_references(symbol.id);
                 println!("{}", serde_json::to_string_pretty(&references)?);
             }
             QueryCommand::FindCallers(args) => {
-                print_related_symbols(&storage, &args, select_callers).await?
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                print_related_symbols(&storage, &repo, &args, select_callers).await?
             }
             QueryCommand::FindCallees(args) => {
-                print_related_symbols(&storage, &args, select_callees).await?
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                print_related_symbols(&storage, &repo, &args, select_callees).await?
             }
             QueryCommand::FindDependencies(args) => {
-                print_related_symbols(&storage, &args, select_dependencies).await?
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                print_related_symbols(&storage, &repo, &args, select_dependencies).await?
             }
             QueryCommand::FindDependents(args) => {
-                print_related_symbols(&storage, &args, select_dependents).await?
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                print_related_symbols(&storage, &repo, &args, select_dependents).await?
             }
         },
         Command::Demo { command } => match command {

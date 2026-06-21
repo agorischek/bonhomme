@@ -234,10 +234,17 @@ fn render_page(context: &ExplorerContext, snapshot: &ExplorerSnapshot) -> String
 </head>
 <body>
   <header class="topbar">
-    <div>
+    <div class="title-block">
       <div class="eyebrow">bonhomme explorer</div>
       <h1>{repo}</h1>
     </div>
+    <form class="top-controls" method="get" action="/">
+      <label class="field"><span>Branch</span>{branch_select}</label>
+      <label class="field"><span>As of</span><input type="number" min="0" max="{latest_count}" name="as_of" value="{as_of_value}" placeholder="latest"></label>
+      {symbol_input}
+      <button type="submit">View</button>
+      <a class="button secondary" href="{latest_href}">Latest</a>
+    </form>
     <div class="meta">
       <span>{branch}</span>
       <span>{as_of}</span>
@@ -245,18 +252,6 @@ fn render_page(context: &ExplorerContext, snapshot: &ExplorerSnapshot) -> String
       <span>{refs} refs</span>
     </div>
   </header>
-  <form class="controls" method="get" action="/">
-    <label>Branch {branch_select}</label>
-    <label>As of operation <input type="number" min="0" max="{latest_count}" name="as_of" value="{as_of_value}" placeholder="latest"></label>
-    {symbol_input}
-    <button type="submit">View</button>
-    <a class="button secondary" href="{latest_href}">Latest</a>
-  </form>
-  <section class="context-strip">
-    <span>root <strong>{root}</strong></span>
-    <span>config <strong>{config}</strong></span>
-    <span>storage <strong>{database}</strong></span>
-  </section>
   <main class="explorer-layout">
     <aside class="symbol-rail">
       <div class="section-title">Symbols</div>
@@ -279,6 +274,14 @@ fn render_page(context: &ExplorerContext, snapshot: &ExplorerSnapshot) -> String
           {operations}
         </div>
       </section>
+      <details class="environment">
+        <summary>Environment</summary>
+        <dl>
+          <div><dt>root</dt><dd>{root}</dd></div>
+          <div><dt>config</dt><dd>{config}</dd></div>
+          <div><dt>storage</dt><dd>{database}</dd></div>
+        </dl>
+      </details>
     </article>
   </main>
 </body>
@@ -735,15 +738,15 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .topbar {
-  min-height: 76px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 16px 24px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: end;
+  gap: 18px;
+  padding: 18px 24px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
+.title-block { min-width: 0; }
 .eyebrow {
   color: var(--muted);
   font-size: 12px;
@@ -754,13 +757,13 @@ h1, h2, h3 { margin: 0; }
 h1 { font-size: 24px; line-height: 1.2; }
 h2 { font-size: 20px; margin-bottom: 10px; }
 h3 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; }
-.meta, .chips, .context-strip {
+.meta, .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
-.meta span, .chips span, .context-strip span, .pill {
+.meta span, .chips span, .pill {
   border: 1px solid var(--border);
   background: var(--bg);
   border-radius: 999px;
@@ -768,16 +771,19 @@ h3 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); text-transform: u
   color: var(--muted);
   white-space: nowrap;
 }
-.controls {
+.top-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: end;
-  gap: 12px;
-  padding: 12px 24px;
-  border-bottom: 1px solid var(--border);
-  background: #fff;
+  justify-content: flex-end;
+  gap: 8px;
 }
-label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+.field {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
 select, input, button, .button {
   min-height: 32px;
   border: 1px solid var(--border);
@@ -798,16 +804,12 @@ button, .button {
   background: #fff;
   color: var(--accent);
 }
-.context-strip {
-  padding: 10px 24px;
-  color: var(--muted);
-}
 .explorer-layout {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 980px);
   gap: 32px;
   align-items: start;
-  padding: 18px 24px 40px;
+  padding: 24px 24px 40px;
 }
 .symbol-rail {
   min-width: 0;
@@ -900,6 +902,30 @@ button, .button {
 .muted, .empty p { color: var(--muted); }
 details { margin-top: 12px; }
 summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.environment {
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+.environment dl {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0 0;
+}
+.environment dl div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+}
+.environment dt {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+.environment dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 .error-page {
   max-width: 760px;
   margin: 60px auto;
@@ -910,12 +936,16 @@ summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 }
 @media (max-width: 1100px) {
   .explorer-layout, .content-grid { grid-template-columns: 1fr; }
+  .topbar {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+  .top-controls { justify-content: flex-start; }
   .symbol-rail {
     padding-right: 0;
     padding-bottom: 18px;
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
-  .topbar { align-items: flex-start; flex-direction: column; }
 }
 </style>"#;
