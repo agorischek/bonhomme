@@ -163,19 +163,6 @@ ground), then bring Go's emission onto the shared engine, then weigh P6.
   intentional differences (e.g. comment-anchored ids in slices vs name-derived in
   import). → Enumerate them in P3 with a test per strategy before collapsing.
 
-## Near-term vs north star
-
-The north star is a multi-day, multi-commit refactor; it should not block the
-bleeding. Independent of it, do now:
-
-- **Fix instance #3** (preamble/imports drop on the TS write path) — same shape
-  as the property fix, scoped and isolated.
-- **Add the parity guardrail** — a cheap test that fails when import and parse
-  diverge on kinds. The doc-fidelity gate only covers import→render; this covers
-  the read/write split the gate cannot see.
-
-These stop the recurring bug today; the refactor removes its possibility.
-
 ## Success criteria
 
 - `import`, `recover`, and `diff_slice` are wrappers over one `diff(base, model)`.
