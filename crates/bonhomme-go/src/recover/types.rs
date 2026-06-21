@@ -6,7 +6,7 @@ use super::{
     queue_delete,
 };
 use crate::{
-    import::{field_id, interface_method_id, type_id},
+    import::{field_id, interface_method_id, package_scope, type_id},
     model::{Declaration, ParsedFile},
 };
 use anyhow::Result;
@@ -35,7 +35,7 @@ pub(super) fn recover_types(
             update_type_declaration_if_needed(&base_symbol, edited_symbol, plan);
         }
         for edited_index in matches.added {
-            create_type(file_id, edited[edited_index], plan);
+            create_type(file_id, file, edited[edited_index], plan);
         }
         for base_index in matches.deleted {
             delete_subtree(base, base_symbols[base_index].id, plan);
@@ -97,7 +97,7 @@ fn recover_fields(
     for edited_index in matches.added {
         let edited_field = edited[edited_index];
         plan.symbol_edits.push(Operation::CreateSymbol {
-            symbol_id: field_id(&edited_type.name, &edited_field.name),
+            symbol_id: field_id(base_type.id, &edited_field.name),
             parent_id: Some(base_type.id),
             kind: "field".to_string(),
             name: edited_field.name.clone(),
@@ -138,7 +138,7 @@ fn recover_interface_methods(
     for edited_index in matches.added {
         let edited_method = edited[edited_index];
         plan.symbol_edits.push(Operation::CreateSymbol {
-            symbol_id: interface_method_id(&edited_type.name, &edited_method.name),
+            symbol_id: interface_method_id(base_type.id, &edited_method.name),
             parent_id: Some(base_type.id),
             kind: "method".to_string(),
             name: edited_method.name.clone(),
@@ -152,13 +152,15 @@ fn recover_interface_methods(
     Ok(())
 }
 
-fn create_type(file_id: Uuid, declaration: &Declaration, plan: &mut Plan) {
-    let symbol_id = type_id(&declaration.name);
+fn create_type(file_id: Uuid, file: &ParsedFile, declaration: &Declaration, plan: &mut Plan) {
+    let scope = package_scope(file);
+    let symbol_id = type_id(&scope, &file.path, &declaration.name);
     plan.created_symbols.push((
         symbol_id,
         Some(file_id),
         declaration.kind.clone(),
         declaration.name.clone(),
+        scope,
     ));
     plan.symbol_edits.push(Operation::CreateSymbol {
         symbol_id,
@@ -175,7 +177,7 @@ fn create_type_children(symbol_id: Uuid, declaration: &Declaration, plan: &mut P
     if declaration.kind == "struct" {
         for field in &declaration.fields {
             plan.symbol_edits.push(Operation::CreateSymbol {
-                symbol_id: field_id(&declaration.name, &field.name),
+                symbol_id: field_id(symbol_id, &field.name),
                 parent_id: Some(symbol_id),
                 kind: "field".to_string(),
                 name: field.name.clone(),
@@ -187,7 +189,7 @@ fn create_type_children(symbol_id: Uuid, declaration: &Declaration, plan: &mut P
     if declaration.kind == "interface" {
         for method in &declaration.methods {
             plan.symbol_edits.push(Operation::CreateSymbol {
-                symbol_id: interface_method_id(&declaration.name, &method.name),
+                symbol_id: interface_method_id(symbol_id, &method.name),
                 parent_id: Some(symbol_id),
                 kind: "method".to_string(),
                 name: method.name.clone(),

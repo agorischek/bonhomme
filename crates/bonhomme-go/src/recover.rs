@@ -25,8 +25,8 @@ pub(super) struct Plan {
     pub(super) symbol_edits: Vec<Operation>,
     pub(super) reference_creates: Vec<Operation>,
     pub(super) deleted_symbols: BTreeSet<Uuid>,
-    pub(super) edited_calls: BTreeMap<Uuid, Vec<CallTarget>>,
-    pub(super) created_symbols: Vec<(Uuid, Option<Uuid>, String, String)>,
+    pub(super) edited_calls: BTreeMap<Uuid, (String, Vec<CallTarget>)>,
+    pub(super) created_symbols: Vec<(Uuid, Option<Uuid>, String, String, String)>,
 }
 
 pub fn recover_go_operations(

@@ -12,10 +12,12 @@ const CALLS_KIND: &str = "calls";
 
 #[derive(Default)]
 pub(crate) struct ImportIndexes {
-    pub(crate) types: BTreeMap<String, Uuid>,
-    pub(crate) functions: BTreeMap<String, Uuid>,
-    pub(crate) methods: BTreeMap<(String, String), Uuid>,
-    pub(crate) calls: BTreeMap<Uuid, Vec<CallTarget>>,
+    pub(crate) types: BTreeMap<(String, String), Uuid>,
+    types_by_file: BTreeMap<(String, String, String), Uuid>,
+    pub(crate) functions: BTreeMap<(String, String), Uuid>,
+    pub(crate) methods: BTreeMap<(String, String, String), Uuid>,
+    method_counts: BTreeMap<(String, String, String), usize>,
+    pub(crate) calls: BTreeMap<Uuid, (String, Vec<CallTarget>)>,
 }
 
 pub fn import_go_files(files: &[RenderedFile]) -> Result<Vec<Operation>> {
@@ -54,24 +56,44 @@ pub(crate) fn stable_reference_uuid(from_symbol_id: Uuid, to_symbol_id: Uuid, ki
 
 fn index_package(parsed: &ParsedPackage, indexes: &mut ImportIndexes) {
     for file in &parsed.files {
+        let scope = package_scope(file);
         for declaration in &file.declarations {
+            if declaration.kind == "method"
+                && let Some(receiver) = &declaration.receiver
+            {
+                *indexes
+                    .method_counts
+                    .entry((scope.clone(), receiver.clone(), declaration.name.clone()))
+                    .or_insert(0) += 1;
+            }
             match declaration.kind.as_str() {
                 "struct" | "interface" | "type" => {
-                    indexes
-                        .types
-                        .insert(declaration.name.clone(), type_id(&declaration.name));
+                    indexes.types.insert(
+                        (scope.clone(), declaration.name.clone()),
+                        type_id(&scope, &file.path, &declaration.name),
+                    );
+                    indexes.types_by_file.insert(
+                        (scope.clone(), file.path.clone(), declaration.name.clone()),
+                        type_id(&scope, &file.path, &declaration.name),
+                    );
                 }
                 "function" => {
-                    indexes
-                        .functions
-                        .insert(declaration.name.clone(), function_id(&declaration.name));
+                    indexes.functions.insert(
+                        (scope.clone(), declaration.name.clone()),
+                        function_id(&scope, &file.path, &declaration.name),
+                    );
                 }
                 "method" => {
                     if let Some(receiver) = &declaration.receiver {
-                        indexes.methods.insert(
-                            (receiver.clone(), declaration.name.clone()),
-                            method_id(receiver, &declaration.name),
-                        );
+                        let key = (scope.clone(), receiver.clone(), declaration.name.clone());
+                        if indexes.method_counts.get(&key).copied().unwrap_or_default() == 1
+                            && let Some(parent_id) =
+                                receiver_type_id(indexes, &scope, &file.path, receiver)
+                        {
+                            indexes
+                                .methods
+                                .insert(key, method_id(parent_id, &file.path, &declaration.name));
+                        }
                     }
                 }
                 _ => {}
@@ -99,13 +121,23 @@ fn file_operation(file: &ParsedFile) -> Operation {
 fn non_method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Result<Vec<Operation>> {
     let mut operations = Vec::new();
     let file_id = file_id(&file.path);
+    let scope = package_scope(file);
     for declaration in &file.declarations {
         match declaration.kind.as_str() {
-            "struct" => operations.extend(struct_operations(file_id, declaration)),
-            "interface" => operations.extend(interface_operations(file_id, declaration)),
+            "struct" => {
+                operations.extend(struct_operations(file_id, &scope, &file.path, declaration))
+            }
+            "interface" => operations.extend(interface_operations(
+                file_id,
+                &scope,
+                &file.path,
+                declaration,
+            )),
             "function" => {
-                let symbol_id = function_id(&declaration.name);
-                indexes.calls.insert(symbol_id, declaration.calls.clone());
+                let symbol_id = function_id(&scope, &file.path, &declaration.name);
+                indexes
+                    .calls
+                    .insert(symbol_id, (scope.clone(), declaration.calls.clone()));
                 operations.push(Operation::CreateSymbol {
                     symbol_id,
                     parent_id: Some(file_id),
@@ -120,7 +152,7 @@ fn non_method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Resu
             }
             "const" | "var" | "type" => {
                 operations.push(Operation::CreateSymbol {
-                    symbol_id: value_id(&declaration.kind, &declaration.name),
+                    symbol_id: value_id(&scope, &file.path, &declaration.kind, &declaration.name),
                     parent_id: Some(file_id),
                     kind: declaration.kind.clone(),
                     name: declaration.name.clone(),
@@ -131,15 +163,7 @@ fn non_method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Resu
                     }),
                 });
             }
-            "method" => {
-                let Some(receiver) = &declaration.receiver else {
-                    continue;
-                };
-                indexes
-                    .types
-                    .get(receiver)
-                    .with_context(|| format!("Go receiver type {receiver} does not exist"))?;
-            }
+            "method" => {}
             _ => {}
         }
     }
@@ -148,6 +172,7 @@ fn non_method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Resu
 
 fn method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Result<Vec<Operation>> {
     let mut operations = Vec::new();
+    let scope = package_scope(file);
     for declaration in &file.declarations {
         if declaration.kind != "method" {
             continue;
@@ -156,12 +181,18 @@ fn method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Result<V
             .receiver
             .as_ref()
             .context("Go method declaration is missing receiver")?;
-        let parent_id = *indexes
-            .types
-            .get(receiver)
-            .with_context(|| format!("Go receiver type {receiver} does not exist"))?;
-        let symbol_id = method_id(receiver, &declaration.name);
-        indexes.calls.insert(symbol_id, declaration.calls.clone());
+        let parent_id = method_parent_id(
+            indexes,
+            file_id(&file.path),
+            &scope,
+            &file.path,
+            receiver,
+            &declaration.name,
+        );
+        let symbol_id = method_id(parent_id, &file.path, &declaration.name);
+        indexes
+            .calls
+            .insert(symbol_id, (scope.clone(), declaration.calls.clone()));
         operations.push(Operation::CreateSymbol {
             symbol_id,
             parent_id: Some(parent_id),
@@ -178,8 +209,13 @@ fn method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Result<V
     Ok(operations)
 }
 
-fn struct_operations(file_id: Uuid, declaration: &Declaration) -> Vec<Operation> {
-    let symbol_id = type_id(&declaration.name);
+fn struct_operations(
+    file_id: Uuid,
+    scope: &str,
+    path: &str,
+    declaration: &Declaration,
+) -> Vec<Operation> {
+    let symbol_id = type_id(scope, path, &declaration.name);
     let mut operations = vec![Operation::CreateSymbol {
         symbol_id,
         parent_id: Some(file_id),
@@ -192,7 +228,7 @@ fn struct_operations(file_id: Uuid, declaration: &Declaration) -> Vec<Operation>
     }];
     for field in &declaration.fields {
         operations.push(Operation::CreateSymbol {
-            symbol_id: field_id(&declaration.name, &field.name),
+            symbol_id: field_id(symbol_id, &field.name),
             parent_id: Some(symbol_id),
             kind: "field".to_string(),
             name: field.name.clone(),
@@ -203,8 +239,13 @@ fn struct_operations(file_id: Uuid, declaration: &Declaration) -> Vec<Operation>
     operations
 }
 
-fn interface_operations(file_id: Uuid, declaration: &Declaration) -> Vec<Operation> {
-    let symbol_id = type_id(&declaration.name);
+fn interface_operations(
+    file_id: Uuid,
+    scope: &str,
+    path: &str,
+    declaration: &Declaration,
+) -> Vec<Operation> {
+    let symbol_id = type_id(scope, path, &declaration.name);
     let mut operations = vec![Operation::CreateSymbol {
         symbol_id,
         parent_id: Some(file_id),
@@ -217,7 +258,7 @@ fn interface_operations(file_id: Uuid, declaration: &Declaration) -> Vec<Operati
     }];
     for method in &declaration.methods {
         operations.push(Operation::CreateSymbol {
-            symbol_id: interface_method_id(&declaration.name, &method.name),
+            symbol_id: interface_method_id(symbol_id, &method.name),
             parent_id: Some(symbol_id),
             kind: "method".to_string(),
             name: method.name.clone(),
@@ -231,9 +272,9 @@ fn interface_operations(file_id: Uuid, declaration: &Declaration) -> Vec<Operati
 pub(crate) fn reference_operations(indexes: &ImportIndexes) -> Vec<Operation> {
     let mut seen = BTreeSet::new();
     let mut operations = Vec::new();
-    for (from_symbol_id, calls) in &indexes.calls {
+    for (from_symbol_id, (scope, calls)) in &indexes.calls {
         for call in calls {
-            let Some(to_symbol_id) = resolve_call(indexes, call) else {
+            let Some(to_symbol_id) = resolve_call(indexes, scope, call) else {
                 continue;
             };
             if to_symbol_id == *from_symbol_id
@@ -252,12 +293,23 @@ pub(crate) fn reference_operations(indexes: &ImportIndexes) -> Vec<Operation> {
     operations
 }
 
-pub(crate) fn resolve_call(indexes: &ImportIndexes, call: &CallTarget) -> Option<Uuid> {
+pub(crate) fn resolve_call(
+    indexes: &ImportIndexes,
+    scope: &str,
+    call: &CallTarget,
+) -> Option<Uuid> {
     match call.kind.as_str() {
-        "function" => indexes.functions.get(&call.name).copied(),
+        "function" => indexes
+            .functions
+            .get(&(scope.to_string(), call.name.clone()))
+            .copied(),
         "method" => indexes
             .methods
-            .get(&(call.receiver.as_ref()?.clone(), call.name.clone()))
+            .get(&(
+                scope.to_string(),
+                call.receiver.as_ref()?.clone(),
+                call.name.clone(),
+            ))
             .copied(),
         _ => None,
     }
@@ -267,26 +319,67 @@ pub(crate) fn file_id(path: &str) -> Uuid {
     stable_go_uuid(&format!("file:{path}"))
 }
 
-pub(crate) fn type_id(name: &str) -> Uuid {
-    stable_go_uuid(&format!("type:{name}"))
+pub(crate) fn package_scope(file: &ParsedFile) -> String {
+    scope_from_path(&file.path, &file.package_name)
 }
 
-pub(crate) fn function_id(name: &str) -> Uuid {
-    stable_go_uuid(&format!("function:{name}"))
+pub(crate) fn scope_from_path(path: &str, package_name: &str) -> String {
+    let directory = path.rsplit_once('/').map(|(dir, _)| dir).unwrap_or(".");
+    format!("{directory}:{package_name}")
 }
 
-pub(crate) fn method_id(receiver: &str, name: &str) -> Uuid {
-    stable_go_uuid(&format!("method:{receiver}:{name}"))
+pub(crate) fn type_id(scope: &str, path: &str, name: &str) -> Uuid {
+    stable_go_uuid(&format!("type:{scope}:{path}:{name}"))
 }
 
-pub(crate) fn field_id(owner: &str, name: &str) -> Uuid {
-    stable_go_uuid(&format!("field:{owner}:{name}"))
+pub(crate) fn function_id(scope: &str, path: &str, name: &str) -> Uuid {
+    stable_go_uuid(&format!("function:{scope}:{path}:{name}"))
 }
 
-pub(crate) fn interface_method_id(owner: &str, name: &str) -> Uuid {
-    stable_go_uuid(&format!("interface-method:{owner}:{name}"))
+fn receiver_type_id(
+    indexes: &ImportIndexes,
+    scope: &str,
+    path: &str,
+    receiver: &str,
+) -> Option<Uuid> {
+    indexes
+        .types_by_file
+        .get(&(scope.to_string(), path.to_string(), receiver.to_string()))
+        .or_else(|| {
+            indexes
+                .types
+                .get(&(scope.to_string(), receiver.to_string()))
+        })
+        .copied()
 }
 
-pub(crate) fn value_id(kind: &str, name: &str) -> Uuid {
-    stable_go_uuid(&format!("{kind}:{name}"))
+fn method_parent_id(
+    indexes: &ImportIndexes,
+    file_id: Uuid,
+    scope: &str,
+    path: &str,
+    receiver: &str,
+    name: &str,
+) -> Uuid {
+    let key = (scope.to_string(), receiver.to_string(), name.to_string());
+    if indexes.method_counts.get(&key).copied().unwrap_or_default() > 1 {
+        return file_id;
+    }
+    receiver_type_id(indexes, scope, path, receiver).unwrap_or(file_id)
+}
+
+pub(crate) fn method_id(parent_id: Uuid, path: &str, name: &str) -> Uuid {
+    stable_go_uuid(&format!("method:{parent_id}:{path}:{name}"))
+}
+
+pub(crate) fn field_id(owner_id: Uuid, name: &str) -> Uuid {
+    stable_go_uuid(&format!("field:{owner_id}:{name}"))
+}
+
+pub(crate) fn interface_method_id(owner_id: Uuid, name: &str) -> Uuid {
+    stable_go_uuid(&format!("interface-method:{owner_id}:{name}"))
+}
+
+pub(crate) fn value_id(scope: &str, path: &str, kind: &str, name: &str) -> Uuid {
+    stable_go_uuid(&format!("{kind}:{scope}:{path}:{name}"))
 }

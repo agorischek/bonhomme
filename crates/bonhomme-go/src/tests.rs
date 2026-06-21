@@ -97,6 +97,107 @@ func (s *OrderService) Summary() string {
     assert_eq!(callees[0].id, list_orders_id);
 }
 
+#[test]
+fn import_scopes_duplicate_function_names_by_package_directory() {
+    let files = vec![
+        RenderedFile {
+            path: "cmd/alpha/main.go".to_string(),
+            content: "package main\n\nfunc main() {}\n".to_string(),
+        },
+        RenderedFile {
+            path: "cmd/beta/main.go".to_string(),
+            content: "package main\n\nfunc main() {}\n".to_string(),
+        },
+    ];
+
+    let graph = materialize_operations(import_go_files(&files).unwrap());
+    let mains = graph
+        .find_symbol("main")
+        .into_iter()
+        .filter(|symbol| symbol.kind == "function")
+        .collect::<Vec<_>>();
+
+    assert_eq!(mains.len(), 2);
+    assert_ne!(mains[0].id, mains[1].id);
+}
+
+#[test]
+fn import_scopes_build_variant_methods_by_file_path() {
+    let files = vec![
+        RenderedFile {
+            path: "pkg/console/progress.go".to_string(),
+            content: "package console\n\ntype ProgressBar struct{}\n\nfunc (p *ProgressBar) Update(current int64) string { return \"\" }\n".to_string(),
+        },
+        RenderedFile {
+            path: "pkg/console/progress_wasm.go".to_string(),
+            content: "package console\n\ntype ProgressBar struct{}\n\nfunc (p *ProgressBar) Update(current int64) string { return \"\" }\n".to_string(),
+        },
+    ];
+
+    let graph = materialize_operations(import_go_files(&files).unwrap());
+    let methods = graph
+        .find_symbol("Update")
+        .into_iter()
+        .filter(|symbol| symbol.kind == "method")
+        .collect::<Vec<_>>();
+
+    assert_eq!(methods.len(), 2);
+    assert_ne!(methods[0].id, methods[1].id);
+    assert_ne!(methods[0].parent_id, methods[1].parent_id);
+}
+
+#[test]
+fn import_handles_file_with_no_declarations() {
+    let graph = materialize_operations(
+        import_go_files(&[RenderedFile {
+            path: "pkg/cli/doc.go".to_string(),
+            content: "package cli\n".to_string(),
+        }])
+        .unwrap(),
+    );
+
+    assert_eq!(graph.root_symbols().len(), 1);
+    assert_eq!(graph.root_symbols()[0].name, "pkg/cli/doc.go");
+}
+
+#[test]
+fn import_allows_build_variant_methods_on_shared_receiver() {
+    let files = vec![
+        RenderedFile {
+            path: "pkg/workflow/compiler_types.go".to_string(),
+            content: "package workflow\n\ntype Compiler struct{}\n".to_string(),
+        },
+        RenderedFile {
+            path: "pkg/workflow/dependabot.go".to_string(),
+            content: "package workflow\n\nfunc (c *Compiler) GenerateDependabotManifests() error { return nil }\n".to_string(),
+        },
+        RenderedFile {
+            path: "pkg/workflow/dependabot_wasm.go".to_string(),
+            content: "//go:build wasm\n\npackage workflow\n\nfunc (c *Compiler) GenerateDependabotManifests() error { return nil }\n".to_string(),
+        },
+    ];
+
+    let graph = materialize_operations(import_go_files(&files).unwrap());
+    let methods = graph
+        .find_symbol("GenerateDependabotManifests")
+        .into_iter()
+        .filter(|symbol| symbol.kind == "method")
+        .collect::<Vec<_>>();
+    let rendered = render_files(&graph);
+
+    assert_eq!(methods.len(), 2);
+    assert_ne!(methods[0].id, methods[1].id);
+    assert_ne!(methods[0].parent_id, methods[1].parent_id);
+    assert!(
+        rendered
+            .iter()
+            .find(|file| file.path == "pkg/workflow/dependabot_wasm.go")
+            .unwrap()
+            .content
+            .contains("func (c *Compiler) GenerateDependabotManifests() error")
+    );
+}
+
 fn sample_source() -> &'static str {
     r#"
 package order

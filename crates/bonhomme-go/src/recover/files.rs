@@ -1,5 +1,8 @@
 use super::{Plan, base::children_of_kind, matcher::match_by_name, queue_delete};
-use crate::{import::value_id, model::ParsedFile};
+use crate::{
+    import::{package_scope, value_id},
+    model::ParsedFile,
+};
 use anyhow::Result;
 use bonhomme_core::{Operation, SemanticGraph, SymbolNode, metadata_string};
 use serde_json::json;
@@ -35,6 +38,7 @@ pub(super) fn recover_top_level_values(
     file: &ParsedFile,
     plan: &mut Plan,
 ) -> Result<()> {
+    let scope = package_scope(file);
     for kind in ["const", "var", "type"] {
         let base_symbols = children_of_kind(base, file_id, kind);
         let edited = file
@@ -63,7 +67,7 @@ pub(super) fn recover_top_level_values(
         for edited_index in matches.added {
             let edited_symbol = edited[edited_index];
             plan.symbol_edits.push(Operation::CreateSymbol {
-                symbol_id: value_id(kind, &edited_symbol.name),
+                symbol_id: value_id(&scope, &file.path, kind, &edited_symbol.name),
                 parent_id: Some(file_id),
                 kind: kind.to_string(),
                 name: edited_symbol.name.clone(),

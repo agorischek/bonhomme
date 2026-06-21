@@ -18,6 +18,7 @@ pub(crate) struct ParsedFile {
     pub(crate) path: String,
     pub(crate) package_name: String,
     pub(crate) imports: String,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub(crate) declarations: Vec<Declaration>,
 }
 
@@ -34,11 +35,11 @@ pub(crate) struct Declaration {
     pub(crate) body: Option<String>,
     #[serde(default)]
     pub(crate) declaration: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub(crate) fields: Vec<Field>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub(crate) methods: Vec<InterfaceMethod>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub(crate) calls: Vec<CallTarget>,
 }
 
@@ -63,4 +64,12 @@ pub(crate) struct CallTarget {
     pub(crate) name: String,
     #[serde(default)]
     pub(crate) receiver: Option<String>,
+}
+
+fn null_to_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }

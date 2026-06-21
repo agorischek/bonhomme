@@ -1,4 +1,4 @@
-use super::Plan;
+use super::{Plan, base::symbol_scope};
 use crate::import::{ImportIndexes, stable_reference_uuid};
 use bonhomme_core::{Operation, SemanticGraph, metadata_string};
 use std::collections::BTreeSet;
@@ -100,16 +100,27 @@ fn effective_indexes(base: &SemanticGraph, plan: &Plan) -> ImportIndexes {
         }
         match symbol.kind.as_str() {
             "struct" | "interface" | "type" => {
-                indexes.types.insert(symbol.name.clone(), symbol.id);
+                if let Some(scope) = symbol_scope(base, symbol) {
+                    indexes
+                        .types
+                        .insert((scope, symbol.name.clone()), symbol.id);
+                }
             }
             "function" => {
-                indexes.functions.insert(symbol.name.clone(), symbol.id);
+                if let Some(scope) = symbol_scope(base, symbol) {
+                    indexes
+                        .functions
+                        .insert((scope, symbol.name.clone()), symbol.id);
+                }
             }
             "method" if symbol.body.is_some() => {
-                if let Some(receiver) = metadata_string(&symbol.metadata, "receiver") {
+                if let (Some(scope), Some(receiver)) = (
+                    symbol_scope(base, symbol),
+                    metadata_string(&symbol.metadata, "receiver"),
+                ) {
                     indexes
                         .methods
-                        .insert((receiver, symbol.name.clone()), symbol.id);
+                        .insert((scope, receiver, symbol.name.clone()), symbol.id);
                 }
             }
             _ => {}
@@ -120,18 +131,23 @@ fn effective_indexes(base: &SemanticGraph, plan: &Plan) -> ImportIndexes {
 }
 
 fn add_created_symbols(base: &SemanticGraph, plan: &Plan, indexes: &mut ImportIndexes) {
-    for (id, parent_id, kind, name) in &plan.created_symbols {
+    for (id, parent_id, kind, name, scope) in &plan.created_symbols {
         match kind.as_str() {
             "function" => {
-                indexes.functions.insert(name.clone(), *id);
+                indexes.functions.insert((scope.clone(), name.clone()), *id);
             }
             "method" => {
                 let receiver = parent_id
                     .and_then(|parent_id| base.symbols.get(&parent_id))
                     .map(|symbol| symbol.name.clone());
                 if let Some(receiver) = receiver {
-                    indexes.methods.insert((receiver, name.clone()), *id);
+                    indexes
+                        .methods
+                        .insert((scope.clone(), receiver, name.clone()), *id);
                 }
+            }
+            "struct" | "interface" | "type" => {
+                indexes.types.insert((scope.clone(), name.clone()), *id);
             }
             _ => {}
         }
@@ -140,9 +156,9 @@ fn add_created_symbols(base: &SemanticGraph, plan: &Plan, indexes: &mut ImportIn
 
 fn desired_references(indexes: &ImportIndexes, plan: &Plan) -> Vec<(Uuid, Uuid, Uuid)> {
     let mut desired = BTreeSet::new();
-    for (from_symbol_id, calls) in &plan.edited_calls {
+    for (from_symbol_id, (scope, calls)) in &plan.edited_calls {
         for call in calls {
-            let Some(to_symbol_id) = crate::import::resolve_call(indexes, call) else {
+            let Some(to_symbol_id) = crate::import::resolve_call(indexes, scope, call) else {
                 continue;
             };
             if to_symbol_id == *from_symbol_id {

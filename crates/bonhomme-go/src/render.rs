@@ -71,6 +71,7 @@ fn render_top_level_symbol(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut
         "struct" => render_struct(graph, symbol, out),
         "interface" => render_interface(graph, symbol, out),
         "function" => render_function(symbol, out),
+        "method" => render_function(symbol, out),
         "const" | "var" | "type" => render_declaration(symbol, out),
         _ => {}
     }

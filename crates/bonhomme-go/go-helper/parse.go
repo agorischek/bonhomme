@@ -64,9 +64,10 @@ func parseOneFile(
 	pkg *types.Package,
 ) parsedFile {
 	file := parsedFile{
-		Path:        input.file.Path,
-		PackageName: input.ast.Name.Name,
-		Imports:     importsText(input, fset),
+		Path:         input.file.Path,
+		PackageName:  input.ast.Name.Name,
+		Imports:      importsText(input, fset),
+		Declarations: []declaration{},
 	}
 
 	for _, decl := range input.ast.Decls {

@@ -1,11 +1,11 @@
 use super::{
     Plan,
-    base::{base_type_by_name, children_of_kind},
+    base::{base_type_by_name, children_of_kind, methods_for_receiver},
     matcher::match_by_body,
     queue_delete,
 };
 use crate::{
-    import::{function_id, method_id},
+    import::{function_id, method_id, package_scope},
     model::{Declaration, ParsedFile},
 };
 use anyhow::{Result, bail};
@@ -64,17 +64,19 @@ pub(super) fn recover_methods(
         })
         .collect::<Vec<_>>();
 
-    for receiver in edited_receivers(&edited_methods) {
-        let Some(type_symbol) = base_type_by_name(base, &receiver) else {
-            bail!("Go receiver type {receiver} does not exist");
+    for (scope, receiver) in edited_receivers(&edited_methods) {
+        let Some(type_symbol) = base_type_by_name(base, &scope, &receiver) else {
+            bail!("Go receiver type {receiver} does not exist in {scope}");
         };
-        let base_methods = children_of_kind(base, type_symbol.id, "method")
+        let base_methods = methods_for_receiver(base, type_symbol.id, &scope, &receiver)
             .into_iter()
             .filter(|method| !method.body.is_empty())
             .collect::<Vec<_>>();
         let edited = edited_methods
             .iter()
-            .filter(|(_, declaration)| declaration.receiver.as_deref() == Some(&receiver))
+            .filter(|(file, declaration)| {
+                package_scope(file) == scope && declaration.receiver.as_deref() == Some(&receiver)
+            })
             .copied()
             .collect::<Vec<_>>();
         let edited_decls = edited
@@ -121,8 +123,10 @@ fn update_function_if_needed(
         || base_function.signature != signature
         || base_function.body.trim() != body.trim()
     {
-        plan.edited_calls
-            .insert(base_function.id, edited_function.calls.clone());
+        plan.edited_calls.insert(
+            base_function.id,
+            (package_scope(file), edited_function.calls.clone()),
+        );
         plan.symbol_edits.push(Operation::UpdateSymbol {
             symbol_id: base_function.id,
             name: (base_function.name != edited_function.name)
@@ -142,14 +146,16 @@ fn create_function(
     file: &ParsedFile,
     plan: &mut Plan,
 ) {
-    let symbol_id = function_id(&edited_function.name);
+    let scope = package_scope(file);
+    let symbol_id = function_id(&scope, &file.path, &edited_function.name);
     plan.edited_calls
-        .insert(symbol_id, edited_function.calls.clone());
+        .insert(symbol_id, (scope.clone(), edited_function.calls.clone()));
     plan.created_symbols.push((
         symbol_id,
         Some(file_id),
         "function".to_string(),
         edited_function.name.clone(),
+        scope,
     ));
     plan.symbol_edits.push(Operation::CreateSymbol {
         symbol_id,
@@ -177,8 +183,10 @@ fn update_method_if_needed(
         || base_method.signature != signature
         || base_method.body.trim() != body.trim()
     {
-        plan.edited_calls
-            .insert(base_method.id, edited_method.calls.clone());
+        plan.edited_calls.insert(
+            base_method.id,
+            (package_scope(file), edited_method.calls.clone()),
+        );
         plan.symbol_edits.push(Operation::UpdateSymbol {
             symbol_id: base_method.id,
             name: (base_method.name != edited_method.name).then(|| edited_method.name.clone()),
@@ -199,14 +207,16 @@ fn create_method(
     receiver: &str,
     plan: &mut Plan,
 ) {
-    let symbol_id = method_id(receiver, &edited_method.name);
+    let scope = package_scope(file);
+    let symbol_id = method_id(type_symbol_id, &file.path, &edited_method.name);
     plan.edited_calls
-        .insert(symbol_id, edited_method.calls.clone());
+        .insert(symbol_id, (scope.clone(), edited_method.calls.clone()));
     plan.created_symbols.push((
         symbol_id,
         Some(type_symbol_id),
         "method".to_string(),
         edited_method.name.clone(),
+        scope,
     ));
     plan.symbol_edits.push(Operation::CreateSymbol {
         symbol_id,
@@ -222,9 +232,11 @@ fn create_method(
     });
 }
 
-fn edited_receivers(edited_methods: &[(&ParsedFile, &Declaration)]) -> BTreeSet<String> {
+fn edited_receivers(edited_methods: &[(&ParsedFile, &Declaration)]) -> BTreeSet<(String, String)> {
     edited_methods
         .iter()
-        .filter_map(|(_, declaration)| declaration.receiver.clone())
+        .filter_map(|(file, declaration)| {
+            Some((package_scope(file), declaration.receiver.clone()?))
+        })
         .collect()
 }
