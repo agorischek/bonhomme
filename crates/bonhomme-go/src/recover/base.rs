@@ -10,6 +10,7 @@ pub(super) struct BaseSymbol {
     pub(super) signature: String,
     pub(super) declaration: String,
     pub(super) body: String,
+    pub(super) doc: Option<String>,
 }
 
 pub(super) fn base_file_paths(base: &SemanticGraph) -> BTreeMap<String, Uuid> {
@@ -103,5 +104,6 @@ fn base_symbol(symbol: &SymbolNode) -> BaseSymbol {
         signature: metadata_string(&symbol.metadata, "signature").unwrap_or_default(),
         declaration: metadata_string(&symbol.metadata, "declaration").unwrap_or_default(),
         body: symbol.body.clone().unwrap_or_default(),
+        doc: metadata_string(&symbol.metadata, "doc"),
     }
 }

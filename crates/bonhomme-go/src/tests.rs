@@ -270,6 +270,61 @@ type Handler interface {\n\
     );
 }
 
+#[test]
+fn doc_only_edit_is_recovered_as_update() {
+    // P2: editing ONLY a function's godoc (body/signature unchanged) must produce an UpdateSymbol
+    // carrying the new doc, so the change is not silently lost on write-back.
+    let mut operations = import_operations("package order\n\n// Old summary.\nfunc Run() {\n\treturn\n}\n");
+    let graph = materialize_operations(operations.clone());
+    let run_id = graph.find_symbol("Run")[0].id;
+
+    let edited = vec![sample_file(
+        "package order\n\n// New summary.\nfunc Run() {\n\treturn\n}\n",
+    )];
+    let recovered = recover_go_operations(&graph, &[run_id], &edited).unwrap();
+
+    assert!(
+        recovered.iter().any(|operation| matches!(
+            operation,
+            Operation::UpdateSymbol { symbol_id, metadata: Some(metadata), .. }
+                if *symbol_id == run_id
+                    && metadata.get("doc").and_then(|doc| doc.as_str()) == Some("// New summary.")
+        )),
+        "doc-only edit did not become an UpdateSymbol carrying the new doc: {recovered:?}"
+    );
+
+    operations.extend(recovered);
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(rerendered.contains("// New summary."), "{rerendered}");
+    assert!(!rerendered.contains("// Old summary."), "{rerendered}");
+}
+
+#[test]
+fn body_edit_preserves_existing_doc() {
+    // Regression: UpdateSymbol metadata replaces the whole blob, so a body-only edit must re-attach
+    // the unchanged doc or it would be dropped on the next render.
+    let mut operations =
+        import_operations("package order\n\n// Keep me.\nfunc Run() {\n\treturn\n}\n");
+    let graph = materialize_operations(operations.clone());
+    let run_id = graph.find_symbol("Run")[0].id;
+
+    let edited = vec![sample_file(
+        "package order\n\n// Keep me.\nfunc Run() {\n\tprintln(\"hi\")\n}\n",
+    )];
+    operations.extend(recover_go_operations(&graph, &[run_id], &edited).unwrap());
+
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(
+        rerendered.contains("// Keep me."),
+        "body edit dropped the unchanged doc: {rerendered}"
+    );
+    assert!(rerendered.contains("println(\"hi\")"), "{rerendered}");
+}
+
 fn import_graph(content: &str) -> SemanticGraph {
     materialize_operations(import_operations(content))
 }

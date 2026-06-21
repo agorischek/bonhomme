@@ -6,7 +6,7 @@ use super::{
     queue_delete,
 };
 use crate::{
-    import::{field_id, interface_method_id, package_scope, type_id},
+    import::{field_id, interface_method_id, metadata_with_doc, package_scope, type_id},
     model::{Declaration, ParsedFile},
 };
 use anyhow::Result;
@@ -50,12 +50,18 @@ fn update_type_declaration_if_needed(
     plan: &mut Plan,
 ) {
     let declaration = edited_symbol.declaration.clone().unwrap_or_default();
-    if base_symbol.name != edited_symbol.name || base_symbol.declaration != declaration {
+    if base_symbol.name != edited_symbol.name
+        || base_symbol.declaration != declaration
+        || base_symbol.doc.as_deref() != edited_symbol.doc.as_deref()
+    {
         plan.symbol_edits.push(Operation::UpdateSymbol {
             symbol_id: base_symbol.id,
             name: (base_symbol.name != edited_symbol.name).then(|| edited_symbol.name.clone()),
             body: None,
-            metadata: Some(json!({ "declaration": declaration })),
+            metadata: Some(metadata_with_doc(
+                json!({ "declaration": declaration }),
+                edited_symbol.doc.as_deref(),
+            )),
         });
     }
 }
@@ -85,12 +91,17 @@ fn recover_fields(
     for (base_index, edited_index) in matches.matched {
         let base_field = &base_fields[base_index];
         let edited_field = edited[edited_index];
-        if base_field.declaration != edited_field.declaration {
+        if base_field.declaration != edited_field.declaration
+            || base_field.doc.as_deref() != edited_field.doc.as_deref()
+        {
             plan.symbol_edits.push(Operation::UpdateSymbol {
                 symbol_id: base_field.id,
                 name: None,
                 body: None,
-                metadata: Some(json!({"declaration": edited_field.declaration})),
+                metadata: Some(metadata_with_doc(
+                    json!({"declaration": edited_field.declaration}),
+                    edited_field.doc.as_deref(),
+                )),
             });
         }
     }
@@ -102,7 +113,10 @@ fn recover_fields(
             kind: "field".to_string(),
             name: edited_field.name.clone(),
             body: None,
-            metadata: json!({"declaration": edited_field.declaration}),
+            metadata: metadata_with_doc(
+                json!({"declaration": edited_field.declaration}),
+                edited_field.doc.as_deref(),
+            ),
         });
     }
     for base_index in matches.deleted {
@@ -126,12 +140,17 @@ fn recover_interface_methods(
     for (base_index, edited_index) in matches.matched {
         let base_method = &base_methods[base_index];
         let edited_method = edited[edited_index];
-        if base_method.signature != edited_method.signature {
+        if base_method.signature != edited_method.signature
+            || base_method.doc.as_deref() != edited_method.doc.as_deref()
+        {
             plan.symbol_edits.push(Operation::UpdateSymbol {
                 symbol_id: base_method.id,
                 name: None,
                 body: None,
-                metadata: Some(json!({"signature": edited_method.signature})),
+                metadata: Some(metadata_with_doc(
+                    json!({"signature": edited_method.signature}),
+                    edited_method.doc.as_deref(),
+                )),
             });
         }
     }
@@ -143,7 +162,10 @@ fn recover_interface_methods(
             kind: "method".to_string(),
             name: edited_method.name.clone(),
             body: None,
-            metadata: json!({"signature": edited_method.signature}),
+            metadata: metadata_with_doc(
+                json!({"signature": edited_method.signature}),
+                edited_method.doc.as_deref(),
+            ),
         });
     }
     for base_index in matches.deleted {
@@ -168,7 +190,10 @@ fn create_type(file_id: Uuid, file: &ParsedFile, declaration: &Declaration, plan
         kind: declaration.kind.clone(),
         name: declaration.name.clone(),
         body: None,
-        metadata: json!({"declaration": declaration.declaration.as_deref().unwrap_or("")}),
+        metadata: metadata_with_doc(
+            json!({"declaration": declaration.declaration.as_deref().unwrap_or("")}),
+            declaration.doc.as_deref(),
+        ),
     });
     create_type_children(symbol_id, declaration, plan);
 }
@@ -182,7 +207,10 @@ fn create_type_children(symbol_id: Uuid, declaration: &Declaration, plan: &mut P
                 kind: "field".to_string(),
                 name: field.name.clone(),
                 body: None,
-                metadata: json!({"declaration": field.declaration}),
+                metadata: metadata_with_doc(
+                    json!({"declaration": field.declaration}),
+                    field.doc.as_deref(),
+                ),
             });
         }
     }
@@ -194,7 +222,10 @@ fn create_type_children(symbol_id: Uuid, declaration: &Declaration, plan: &mut P
                 kind: "method".to_string(),
                 name: method.name.clone(),
                 body: None,
-                metadata: json!({"signature": method.signature}),
+                metadata: metadata_with_doc(
+                    json!({"signature": method.signature}),
+                    method.doc.as_deref(),
+                ),
             });
         }
     }

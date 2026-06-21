@@ -1,6 +1,6 @@
 use super::{Plan, base::children_of_kind, matcher::match_by_name, queue_delete};
 use crate::{
-    import::{package_scope, value_id},
+    import::{metadata_with_doc, package_scope, value_id},
     model::ParsedFile,
 };
 use anyhow::Result;
@@ -51,16 +51,22 @@ pub(super) fn recover_top_level_values(
             let base_symbol = base_symbols[base_index].clone();
             let edited_symbol = edited[edited_index];
             let declaration = edited_symbol.declaration.clone().unwrap_or_default();
-            if base_symbol.name != edited_symbol.name || base_symbol.declaration != declaration {
+            if base_symbol.name != edited_symbol.name
+                || base_symbol.declaration != declaration
+                || base_symbol.doc.as_deref() != edited_symbol.doc.as_deref()
+            {
                 plan.symbol_edits.push(Operation::UpdateSymbol {
                     symbol_id: base_symbol.id,
                     name: (base_symbol.name != edited_symbol.name)
                         .then(|| edited_symbol.name.clone()),
                     body: None,
-                    metadata: Some(json!({
-                        "declaration": declaration,
-                        "path": file.path,
-                    })),
+                    metadata: Some(metadata_with_doc(
+                        json!({
+                            "declaration": declaration,
+                            "path": file.path,
+                        }),
+                        edited_symbol.doc.as_deref(),
+                    )),
                 });
             }
         }
@@ -72,10 +78,13 @@ pub(super) fn recover_top_level_values(
                 kind: kind.to_string(),
                 name: edited_symbol.name.clone(),
                 body: None,
-                metadata: json!({
-                    "declaration": edited_symbol.declaration.as_deref().unwrap_or(""),
-                    "path": file.path,
-                }),
+                metadata: metadata_with_doc(
+                    json!({
+                        "declaration": edited_symbol.declaration.as_deref().unwrap_or(""),
+                        "path": file.path,
+                    }),
+                    edited_symbol.doc.as_deref(),
+                ),
             });
         }
         for base_index in matches.deleted {

@@ -5,7 +5,7 @@ use super::{
     queue_delete,
 };
 use crate::{
-    import::{function_id, method_id, package_scope},
+    import::{function_id, metadata_with_doc, method_id, package_scope},
     model::{Declaration, ParsedFile},
 };
 use anyhow::{Result, bail};
@@ -122,6 +122,7 @@ fn update_function_if_needed(
     if base_function.name != edited_function.name
         || base_function.signature != signature
         || base_function.body.trim() != body.trim()
+        || base_function.doc.as_deref() != edited_function.doc.as_deref()
     {
         plan.edited_calls.insert(
             base_function.id,
@@ -132,10 +133,13 @@ fn update_function_if_needed(
             name: (base_function.name != edited_function.name)
                 .then(|| edited_function.name.clone()),
             body: Some(body),
-            metadata: Some(json!({
-                "signature": signature,
-                "path": file.path,
-            })),
+            metadata: Some(metadata_with_doc(
+                json!({
+                    "signature": signature,
+                    "path": file.path,
+                }),
+                edited_function.doc.as_deref(),
+            )),
         });
     }
 }
@@ -163,10 +167,13 @@ fn create_function(
         kind: "function".to_string(),
         name: edited_function.name.clone(),
         body: edited_function.body.clone(),
-        metadata: json!({
-            "signature": edited_function.signature.as_deref().unwrap_or(""),
-            "path": file.path,
-        }),
+        metadata: metadata_with_doc(
+            json!({
+                "signature": edited_function.signature.as_deref().unwrap_or(""),
+                "path": file.path,
+            }),
+            edited_function.doc.as_deref(),
+        ),
     });
 }
 
@@ -182,6 +189,7 @@ fn update_method_if_needed(
     if base_method.name != edited_method.name
         || base_method.signature != signature
         || base_method.body.trim() != body.trim()
+        || base_method.doc.as_deref() != edited_method.doc.as_deref()
     {
         plan.edited_calls.insert(
             base_method.id,
@@ -191,11 +199,14 @@ fn update_method_if_needed(
             symbol_id: base_method.id,
             name: (base_method.name != edited_method.name).then(|| edited_method.name.clone()),
             body: Some(body),
-            metadata: Some(json!({
-                "signature": signature,
-                "receiver": receiver,
-                "path": file.path,
-            })),
+            metadata: Some(metadata_with_doc(
+                json!({
+                    "signature": signature,
+                    "receiver": receiver,
+                    "path": file.path,
+                }),
+                edited_method.doc.as_deref(),
+            )),
         });
     }
 }
@@ -224,11 +235,14 @@ fn create_method(
         kind: "method".to_string(),
         name: edited_method.name.clone(),
         body: edited_method.body.clone(),
-        metadata: json!({
-            "signature": edited_method.signature.as_deref().unwrap_or(""),
-            "receiver": receiver,
-            "path": file.path,
-        }),
+        metadata: metadata_with_doc(
+            json!({
+                "signature": edited_method.signature.as_deref().unwrap_or(""),
+                "receiver": receiver,
+                "path": file.path,
+            }),
+            edited_method.doc.as_deref(),
+        ),
     });
 }
 
