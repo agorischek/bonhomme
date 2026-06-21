@@ -246,6 +246,30 @@ const Version = \"1.0\"\n";
     );
 }
 
+#[test]
+fn field_and_interface_method_docs_round_trip() {
+    // Regression: docs on struct fields and interface methods (nested godoc) were uncaptured.
+    let source = "package order\n\n\
+// Server holds config.\n\
+type Server struct {\n\
+\t// Port is the listen port.\n\tPort int\n\
+}\n\n\
+// Handler processes requests.\n\
+type Handler interface {\n\
+\t// Serve handles one request.\n\tServe(path string) error\n\
+}\n";
+    let content = render_files(&import_graph(source))[0].content.clone();
+
+    assert!(
+        content.contains("// Port is the listen port."),
+        "struct field doc dropped: {content}"
+    );
+    assert!(
+        content.contains("// Serve handles one request."),
+        "interface method doc dropped: {content}"
+    );
+}
+
 fn import_graph(content: &str) -> SemanticGraph {
     materialize_operations(import_operations(content))
 }

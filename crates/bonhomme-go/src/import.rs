@@ -219,10 +219,14 @@ fn method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Result<V
 }
 
 /// Attach a declaration's godoc comment (`// …` above it) as `doc` metadata, so it renders back.
-fn with_doc(mut metadata: serde_json::Value, declaration: &Declaration) -> serde_json::Value {
-    if let Some(doc) = &declaration.doc
-        && !doc.is_empty()
-    {
+fn with_doc(metadata: serde_json::Value, declaration: &Declaration) -> serde_json::Value {
+    metadata_with_doc(metadata, declaration.doc.as_deref())
+}
+
+/// Attach a raw godoc block as `doc` metadata when present and non-empty. Shared by declarations,
+/// struct fields, and interface methods so each documentable node renders its doc back.
+fn metadata_with_doc(mut metadata: serde_json::Value, doc: Option<&str>) -> serde_json::Value {
+    if let Some(doc) = doc.filter(|doc| !doc.is_empty()) {
         metadata["doc"] = json!(doc);
     }
     metadata
@@ -255,7 +259,10 @@ fn struct_operations(
             kind: "field".to_string(),
             name: field.name.clone(),
             body: None,
-            metadata: json!({"declaration": field.declaration}),
+            metadata: metadata_with_doc(
+                json!({"declaration": field.declaration}),
+                field.doc.as_deref(),
+            ),
         });
     }
     operations
@@ -288,7 +295,10 @@ fn interface_operations(
             kind: "method".to_string(),
             name: method.name.clone(),
             body: None,
-            metadata: json!({"signature": method.signature}),
+            metadata: metadata_with_doc(
+                json!({"signature": method.signature}),
+                method.doc.as_deref(),
+            ),
         });
     }
     operations

@@ -87,6 +87,7 @@ fn render_struct(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut String) {
         if child.kind == "field"
             && let Some(declaration) = metadata_string(&child.metadata, "declaration")
         {
+            render_member_doc(child, out);
             out.push('\t');
             out.push_str(declaration.trim());
             out.push('\n');
@@ -111,6 +112,7 @@ fn render_interface(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut String
         if child.kind == "method" && child.body.is_none() {
             let signature = metadata_string(&child.metadata, "signature")
                 .unwrap_or_else(|| format!("{}()", child.name));
+            render_member_doc(child, out);
             out.push('\t');
             out.push_str(signature.trim());
             out.push('\n');
@@ -148,6 +150,19 @@ fn render_declaration(symbol: &SymbolNode, out: &mut String) {
 fn render_doc(symbol: &SymbolNode, out: &mut String) {
     if let Some(doc) = metadata_string(&symbol.metadata, "doc") {
         out.push_str(doc.trim_end());
+        out.push('\n');
+    }
+}
+
+/// Emit a struct field or interface method's godoc (`// …`) indented inside the type body. gofmt
+/// then normalizes alignment.
+fn render_member_doc(symbol: &SymbolNode, out: &mut String) {
+    let Some(doc) = metadata_string(&symbol.metadata, "doc") else {
+        return;
+    };
+    for line in doc.lines() {
+        out.push('\t');
+        out.push_str(line.trim());
         out.push('\n');
     }
 }

@@ -41,11 +41,13 @@ type declaration struct {
 type field struct {
 	Name        string `json:"name"`
 	Declaration string `json:"declaration"`
+	Doc         string `json:"doc,omitempty"`
 }
 
 type method struct {
 	Name      string `json:"name"`
 	Signature string `json:"signature"`
+	Doc       string `json:"doc,omitempty"`
 }
 
 type callTarget struct {

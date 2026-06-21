@@ -50,6 +50,8 @@ pub(crate) struct Declaration {
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) declaration: String,
+    #[serde(default)]
+    pub(crate) doc: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -57,6 +59,8 @@ pub(crate) struct Field {
 pub(crate) struct InterfaceMethod {
     pub(crate) name: String,
     pub(crate) signature: String,
+    #[serde(default)]
+    pub(crate) doc: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]

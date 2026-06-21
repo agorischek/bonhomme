@@ -189,10 +189,12 @@ func parseFields(input parsedInput, fields *ast.FieldList) []field {
 	for _, entry := range fields.List {
 		typeText := strings.TrimSpace(span(input, entry.Type.Pos(), entry.Type.End()))
 		tagText := fieldTag(input, entry)
+		doc := docText(entry.Doc)
 		if len(entry.Names) == 0 {
 			parsed = append(parsed, field{
 				Name:        typeText,
 				Declaration: strings.TrimSpace(span(input, entry.Pos(), entry.End())),
+				Doc:         doc,
 			})
 			continue
 		}
@@ -200,6 +202,7 @@ func parseFields(input parsedInput, fields *ast.FieldList) []field {
 			parsed = append(parsed, field{
 				Name:        name.Name,
 				Declaration: fmt.Sprintf("%s %s%s", name.Name, typeText, tagText),
+				Doc:         doc,
 			})
 		}
 	}
@@ -223,9 +226,11 @@ func parseInterfaceMethods(input parsedInput, methods *ast.FieldList) []method {
 			continue
 		}
 		fullText := strings.TrimSpace(span(input, entry.Pos(), entry.End()))
+		doc := docText(entry.Doc)
 		for _, name := range entry.Names {
 			parsed = append(parsed, method{
 				Name:      name.Name,
+				Doc:       doc,
 				Signature: interfaceMethodSignature(name.Name, fullText, entry.Names),
 			})
 		}
