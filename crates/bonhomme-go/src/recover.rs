@@ -12,7 +12,11 @@ use self::{
     references::recover_references,
     types::recover_types,
 };
-use crate::{model::CallTarget, toolchain::parse_go_files};
+use crate::{
+    import::operations_from_parsed_package,
+    model::{CallTarget, ParsedPackage},
+    toolchain::parse_go_files,
+};
 use anyhow::{Context, Result};
 use bonhomme_core::{Operation, RenderedFile, SemanticGraph};
 use std::collections::{BTreeMap, BTreeSet};
@@ -40,7 +44,7 @@ pub fn recover_go_operations(
 
     for file in &parsed.files {
         let Some(base_file_id) = base_files.remove(&file.path) else {
-            plan.symbol_edits.extend(import_new_file(file, edited)?);
+            plan.symbol_edits.extend(import_new_file(file)?);
             continue;
         };
 
@@ -59,19 +63,10 @@ pub fn recover_go_operations(
     Ok(planned_operations(plan))
 }
 
-fn import_new_file(
-    file: &crate::model::ParsedFile,
-    edited: &[RenderedFile],
-) -> Result<Vec<Operation>> {
-    let source = RenderedFile {
-        path: file.path.clone(),
-        content: edited
-            .iter()
-            .find(|candidate| candidate.path == file.path)
-            .map(|candidate| candidate.content.clone())
-            .unwrap_or_default(),
-    };
-    crate::import::import_go_files(std::slice::from_ref(&source))
+fn import_new_file(file: &crate::model::ParsedFile) -> Result<Vec<Operation>> {
+    operations_from_parsed_package(&ParsedPackage {
+        files: vec![file.clone()],
+    })
 }
 
 fn planned_operations(plan: Plan) -> Vec<Operation> {
