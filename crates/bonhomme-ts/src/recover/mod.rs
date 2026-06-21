@@ -10,8 +10,8 @@ use self::{
 use crate::{
     import::{
         class_metadata, file_metadata, function_metadata, method_metadata, property_metadata,
-        resolved_class_id, resolved_file_id, resolved_function_id, resolved_method_id,
-        resolved_property_id,
+        resolved_class_id, resolved_file_id, resolved_function_id_for_path,
+        resolved_method_id_for_path, resolved_property_id_for_path,
     },
     parse::{
         ParsedClass, ParsedClassMemberIndex, ParsedFile, ParsedFunction, ParsedMethod,
@@ -178,8 +178,7 @@ fn create_function(
     edited: &ParsedFunction,
     planned: &mut PlannedOperations,
 ) {
-    let file = parsed_file_stub(path);
-    let symbol_id = resolved_function_id(&file, edited);
+    let symbol_id = resolved_function_id_for_path(path, edited);
     planned.references.created_symbols.push(SymbolIdentity {
         id: symbol_id,
         parent_id: Some(file_id),
@@ -341,8 +340,7 @@ fn create_method(
     edited: &ParsedMethod,
     planned: &mut PlannedOperations,
 ) {
-    let file = parsed_file_stub(path);
-    let symbol_id = resolved_method_id(&file, class_id, edited);
+    let symbol_id = resolved_method_id_for_path(path, class_id, edited);
     planned.references.created_symbols.push(SymbolIdentity {
         id: symbol_id,
         parent_id: Some(class_id),
@@ -434,8 +432,7 @@ fn create_property(
     edited: &ParsedProperty,
     planned: &mut PlannedOperations,
 ) {
-    let file = parsed_file_stub(path);
-    let symbol_id = resolved_property_id(&file, class_id, edited);
+    let symbol_id = resolved_property_id_for_path(path, class_id, edited);
     planned.references.created_symbols.push(SymbolIdentity {
         id: symbol_id,
         parent_id: Some(class_id),
@@ -530,15 +527,4 @@ fn delete_class(base: &BaseClass, planned: &mut PlannedOperations) {
     planned
         .symbol_deletes
         .push(Operation::DeleteSymbol { symbol_id: base.id });
-}
-
-fn parsed_file_stub(path: &str) -> ParsedFile {
-    ParsedFile {
-        path: path.to_string(),
-        file_symbol_id: None,
-        preamble: String::new(),
-        classes: Vec::new(),
-        functions: Vec::new(),
-        top_level_order: Vec::new(),
-    }
 }

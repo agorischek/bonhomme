@@ -644,7 +644,7 @@ fn normalize_relative_path(current_path: &str, target: &str) -> String {
         current_path
             .rsplit_once('/')
             .map(|(dir, _)| dir.split('/').map(str::to_string).collect())
-            .unwrap_or_else(Vec::new)
+            .unwrap_or_default()
     };
 
     for part in target.trim_start_matches('/').split('/') {

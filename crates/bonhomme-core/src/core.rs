@@ -1,3 +1,4 @@
+mod desired_recovery;
 mod graph;
 mod merge;
 mod metadata;
@@ -8,6 +9,9 @@ mod queries;
 #[cfg(test)]
 mod tests;
 
+pub use desired_recovery::{
+    DesiredRecoveryOptions, recover_from_desired_operations, scoped_file_symbols_by_path,
+};
 pub use graph::{SemanticGraph, detect_moves, materialize};
 pub use merge::{MergeAnalysis, MergeConflict, MergeOutcome, analyze_merge};
 pub use metadata::{metadata_bool, metadata_string};

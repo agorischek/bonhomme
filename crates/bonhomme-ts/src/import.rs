@@ -80,22 +80,38 @@ pub(crate) fn resolved_file_id(file: &ParsedFile) -> Uuid {
 }
 
 pub(crate) fn resolved_class_id(file: &ParsedFile, class: &ParsedClass) -> Uuid {
+    resolved_class_id_for_path(&file.path, class)
+}
+
+pub(crate) fn resolved_class_id_for_path(path: &str, class: &ParsedClass) -> Uuid {
     class
         .symbol_id
-        .unwrap_or_else(|| stable_import_uuid(&format!("class:{}:{}", file.path, class.name)))
+        .unwrap_or_else(|| stable_import_uuid(&format!("class:{path}:{}", class.name)))
 }
 
 pub(crate) fn resolved_function_id(file: &ParsedFile, function: &ParsedFunction) -> Uuid {
+    resolved_function_id_for_path(&file.path, function)
+}
+
+pub(crate) fn resolved_function_id_for_path(path: &str, function: &ParsedFunction) -> Uuid {
     function
         .symbol_id
-        .unwrap_or_else(|| stable_import_uuid(&format!("function:{}:{}", file.path, function.name)))
+        .unwrap_or_else(|| stable_import_uuid(&format!("function:{path}:{}", function.name)))
 }
 
 pub(crate) fn resolved_method_id(file: &ParsedFile, class_id: Uuid, method: &ParsedMethod) -> Uuid {
+    resolved_method_id_for_path(&file.path, class_id, method)
+}
+
+pub(crate) fn resolved_method_id_for_path(
+    path: &str,
+    class_id: Uuid,
+    method: &ParsedMethod,
+) -> Uuid {
     method.symbol_id.unwrap_or_else(|| {
         stable_import_uuid(&format!(
             "{}:{}:{}:{}",
-            method.kind, file.path, class_id, method.name
+            method.kind, path, class_id, method.name
         ))
     })
 }
@@ -105,11 +121,16 @@ pub(crate) fn resolved_property_id(
     class_id: Uuid,
     property: &ParsedProperty,
 ) -> Uuid {
+    resolved_property_id_for_path(&file.path, class_id, property)
+}
+
+pub(crate) fn resolved_property_id_for_path(
+    path: &str,
+    class_id: Uuid,
+    property: &ParsedProperty,
+) -> Uuid {
     property.symbol_id.unwrap_or_else(|| {
-        stable_import_uuid(&format!(
-            "property:{}:{}:{}",
-            file.path, class_id, property.name
-        ))
+        stable_import_uuid(&format!("property:{}:{}:{}", path, class_id, property.name))
     })
 }
 

@@ -57,7 +57,7 @@ pub(super) fn methods_for_receiver(
             })
             .map(base_symbol),
     );
-    methods.sort_by(|left, right| left.id.cmp(&right.id));
+    methods.sort_by_key(|method| method.id);
     methods.dedup_by_key(|method| method.id);
     methods
 }
