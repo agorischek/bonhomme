@@ -8,6 +8,7 @@ use self::{
     references::{ReferencePlan, SymbolIdentity, recover_reference_operations},
 };
 use crate::{
+    oxc_parse::metadata_with_doc,
     parse::{ParsedClass, ParsedFile, ParsedFunction, ParsedMethod, parse_files},
     scanner::stable_import_uuid,
 };
@@ -103,15 +104,22 @@ fn recover_functions(
                 .renamed_symbols
                 .insert(base.id, edited.name.clone());
         }
-        if base.name != edited.name || base.signature != edited.signature || body_changed {
+        if base.name != edited.name
+            || base.signature != edited.signature
+            || body_changed
+            || base.doc.as_deref() != edited.doc.as_deref()
+        {
             planned.symbol_edits.push(Operation::UpdateSymbol {
                 symbol_id: base.id,
                 name: (base.name != edited.name).then(|| edited.name.clone()),
                 body: Some(edited.body.clone()),
-                metadata: Some(json!({
-                    "declaration": edited.signature,
-                    "exported": signature_is_exported(&edited.signature)
-                })),
+                metadata: Some(metadata_with_doc(
+                    json!({
+                        "declaration": edited.signature,
+                        "exported": signature_is_exported(&edited.signature)
+                    }),
+                    edited.doc.as_deref(),
+                )),
             });
         }
     }
@@ -134,10 +142,13 @@ fn recover_functions(
             kind: "function".to_string(),
             name: edited.name.clone(),
             body: Some(edited.body.clone()),
-            metadata: json!({
-                "declaration": edited.signature,
-                "exported": signature_is_exported(&edited.signature)
-            }),
+            metadata: metadata_with_doc(
+                json!({
+                    "declaration": edited.signature,
+                    "exported": signature_is_exported(&edited.signature)
+                }),
+                edited.doc.as_deref(),
+            ),
         });
     }
 
@@ -214,12 +225,19 @@ fn recover_methods(
                 .renamed_symbols
                 .insert(base.id, edited.name.clone());
         }
-        if base.name != edited.name || base.signature != edited.signature || body_changed {
+        if base.name != edited.name
+            || base.signature != edited.signature
+            || body_changed
+            || base.doc.as_deref() != edited.doc.as_deref()
+        {
             planned.symbol_edits.push(Operation::UpdateSymbol {
                 symbol_id: base.id,
                 name: (base.name != edited.name).then(|| edited.name.clone()),
                 body: Some(edited.body.clone()),
-                metadata: Some(json!({"signature": edited.signature})),
+                metadata: Some(metadata_with_doc(
+                    json!({"signature": edited.signature}),
+                    edited.doc.as_deref(),
+                )),
             });
         }
     }
@@ -245,7 +263,10 @@ fn recover_methods(
             kind: "method".to_string(),
             name: edited.name.clone(),
             body: Some(edited.body.clone()),
-            metadata: json!({"signature": edited.signature}),
+            metadata: metadata_with_doc(
+                json!({"signature": edited.signature}),
+                edited.doc.as_deref(),
+            ),
         });
     }
 

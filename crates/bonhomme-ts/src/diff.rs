@@ -1,5 +1,6 @@
 use crate::{
     import::import_typescript_files,
+    oxc_parse::metadata_with_doc,
     parse::{ParsedFile, parse_files},
     scanner::stable_import_uuid,
 };
@@ -86,16 +87,20 @@ fn diff_functions(
                 if original_function.signature != function.signature
                     || original_function.body.trim() != function.body.trim()
                     || original_function.name != function.name
+                    || original_function.doc.as_deref() != function.doc.as_deref()
                 {
                     operations.push(Operation::UpdateSymbol {
                         symbol_id,
                         name: (original_function.name != function.name)
                             .then(|| function.name.clone()),
                         body: Some(function.body.clone()),
-                        metadata: Some(json!({
-                            "declaration": function.signature,
-                            "exported": signature_is_exported(&function.signature)
-                        })),
+                        metadata: Some(metadata_with_doc(
+                            json!({
+                                "declaration": function.signature,
+                                "exported": signature_is_exported(&function.signature)
+                            }),
+                            function.doc.as_deref(),
+                        )),
                     });
                 }
             }
@@ -115,10 +120,13 @@ fn diff_functions(
                     kind: "function".to_string(),
                     name: function.name.clone(),
                     body: Some(function.body.clone()),
-                    metadata: json!({
-                        "declaration": function.signature,
-                        "exported": signature_is_exported(&function.signature)
-                    }),
+                    metadata: metadata_with_doc(
+                        json!({
+                            "declaration": function.signature,
+                            "exported": signature_is_exported(&function.signature)
+                        }),
+                        function.doc.as_deref(),
+                    ),
                 });
             }
         }
@@ -176,13 +184,17 @@ fn diff_classes(
                     if original_method.signature != method.signature
                         || original_method.body.trim() != method.body.trim()
                         || original_method.name != method.name
+                        || original_method.doc.as_deref() != method.doc.as_deref()
                     {
                         operations.push(Operation::UpdateSymbol {
                             symbol_id,
                             name: (original_method.name != method.name)
                                 .then(|| method.name.clone()),
                             body: Some(method.body.clone()),
-                            metadata: Some(json!({"signature": method.signature})),
+                            metadata: Some(metadata_with_doc(
+                                json!({"signature": method.signature}),
+                                method.doc.as_deref(),
+                            )),
                         });
                     }
                 }
@@ -196,7 +208,10 @@ fn diff_classes(
                         kind: "method".to_string(),
                         name: method.name.clone(),
                         body: Some(method.body.clone()),
-                        metadata: json!({"signature": method.signature}),
+                        metadata: metadata_with_doc(
+                            json!({"signature": method.signature}),
+                            method.doc.as_deref(),
+                        ),
                     });
                 }
             }

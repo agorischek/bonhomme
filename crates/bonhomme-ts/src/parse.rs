@@ -1,7 +1,7 @@
 use crate::import::calls::{CallTarget, collect_function_calls};
 use crate::oxc_parse::{
-    body_text, class_declaration_before_body, declaration_before_body, find_file_symbol_id,
-    find_symbol_id, strip_symbol_comments, with_program,
+    DocComments, body_text, class_declaration_before_body, declaration_before_body,
+    find_file_symbol_id, find_symbol_id, strip_symbol_comments, with_program,
 };
 use anyhow::Result;
 use bonhomme_core::RenderedFile;
@@ -18,6 +18,8 @@ pub struct ParsedMethod {
     pub name: String,
     pub signature: String,
     pub body: String,
+    #[serde(default)]
+    pub doc: Option<String>,
     #[serde(skip)]
     pub(crate) calls: Vec<CallTarget>,
 }
@@ -37,6 +39,8 @@ pub struct ParsedFunction {
     pub name: String,
     pub signature: String,
     pub body: String,
+    #[serde(default)]
+    pub doc: Option<String>,
     #[serde(skip)]
     pub(crate) calls: Vec<CallTarget>,
 }
@@ -84,8 +88,9 @@ pub fn parse_file(file: &RenderedFile) -> Result<ParsedFile> {
     let mut functions = Vec::new();
 
     with_program(&file.path, &file.content, |program| {
+        let docs = DocComments::from_comments(&file.content, &program.comments);
         for statement in &program.body {
-            parse_top_level_statement(file, statement, &mut classes, &mut functions);
+            parse_top_level_statement(file, statement, &docs, &mut classes, &mut functions);
         }
         Ok(())
     })?;
@@ -101,36 +106,41 @@ pub fn parse_file(file: &RenderedFile) -> Result<ParsedFile> {
 fn parse_top_level_statement(
     file: &RenderedFile,
     statement: &Statement<'_>,
+    docs: &DocComments,
     classes: &mut Vec<ParsedClass>,
     functions: &mut Vec<ParsedFunction>,
 ) {
     match statement {
         Statement::ClassDeclaration(class) => {
-            push_class(file, class, class.span.start as usize, classes)
+            push_class(file, class, class.span.start as usize, docs, classes)
         }
-        Statement::FunctionDeclaration(function) => {
-            push_function(file, function, function.span.start as usize, functions)
-        }
+        Statement::FunctionDeclaration(function) => push_function(
+            file,
+            function,
+            function.span.start as usize,
+            docs,
+            functions,
+        ),
         Statement::ExportNamedDeclaration(export) => {
             let Some(declaration) = &export.declaration else {
                 return;
             };
             match declaration {
                 Declaration::ClassDeclaration(class) => {
-                    push_class(file, class, export.span.start as usize, classes);
+                    push_class(file, class, export.span.start as usize, docs, classes);
                 }
                 Declaration::FunctionDeclaration(function) => {
-                    push_function(file, function, export.span.start as usize, functions);
+                    push_function(file, function, export.span.start as usize, docs, functions);
                 }
                 _ => {}
             }
         }
         Statement::ExportDefaultDeclaration(export) => match &export.declaration {
             oxc_ast::ast::ExportDefaultDeclarationKind::ClassDeclaration(class) => {
-                push_class(file, class, export.span.start as usize, classes);
+                push_class(file, class, export.span.start as usize, docs, classes);
             }
             oxc_ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
-                push_function(file, function, export.span.start as usize, functions);
+                push_function(file, function, export.span.start as usize, docs, functions);
             }
             _ => {}
         },
@@ -142,6 +152,7 @@ fn push_class(
     file: &RenderedFile,
     class: &Class<'_>,
     declaration_start: usize,
+    docs: &DocComments,
     classes: &mut Vec<ParsedClass>,
 ) {
     let Some(name) = class.id.as_ref().map(|id| id.name.to_string()) else {
@@ -153,7 +164,7 @@ fn push_class(
     classes.push(ParsedClass {
         symbol_id,
         name,
-        methods: parse_methods(file, class, symbol_id),
+        methods: parse_methods(file, class, symbol_id, docs),
     });
 }
 
@@ -161,6 +172,7 @@ fn push_function(
     file: &RenderedFile,
     function: &Function<'_>,
     declaration_start: usize,
+    docs: &DocComments,
     functions: &mut Vec<ParsedFunction>,
 ) {
     let Some(body) = function.body.as_ref() else {
@@ -175,6 +187,7 @@ fn push_function(
         name,
         signature: strip_symbol_comments(&raw_signature),
         body: body_text(&file.content, body),
+        doc: leading_doc(docs, declaration_start, &file.content),
         calls: collect_function_calls(function),
     });
 }
@@ -183,13 +196,16 @@ fn parse_methods(
     file: &RenderedFile,
     class: &Class<'_>,
     parent_class_id: Option<Uuid>,
+    docs: &DocComments,
 ) -> Vec<ParsedMethod> {
     class
         .body
         .body
         .iter()
         .filter_map(|element| match element {
-            ClassElement::MethodDefinition(method) => parse_method(file, method, parent_class_id),
+            ClassElement::MethodDefinition(method) => {
+                parse_method(file, method, parent_class_id, docs)
+            }
             _ => None,
         })
         .collect()
@@ -199,6 +215,7 @@ fn parse_method(
     file: &RenderedFile,
     method: &MethodDefinition<'_>,
     parent_class_id: Option<Uuid>,
+    docs: &DocComments,
 ) -> Option<ParsedMethod> {
     let body = method.value.body.as_ref()?;
     let name = match &method.key {
@@ -213,6 +230,13 @@ fn parse_method(
         name,
         signature: strip_symbol_comments(&raw_signature),
         body: body_text(&file.content, body),
+        doc: leading_doc(docs, method.span.start as usize, &file.content),
         calls: collect_function_calls(&method.value),
     })
+}
+
+/// The JSDoc block immediately preceding `start`, as owned text, or `None`.
+fn leading_doc(docs: &DocComments, start: usize, source: &str) -> Option<String> {
+    docs.leading_for(start, source)
+        .map(|(_, doc)| doc.to_string())
 }

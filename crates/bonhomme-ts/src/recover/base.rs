@@ -24,6 +24,7 @@ pub(super) struct BaseFunction {
     pub(super) name: String,
     pub(super) signature: String,
     pub(super) body: String,
+    pub(super) doc: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -32,6 +33,7 @@ pub(super) struct BaseMethod {
     pub(super) name: String,
     pub(super) signature: String,
     pub(super) body: String,
+    pub(super) doc: Option<String>,
 }
 
 pub(super) fn base_files_by_path(
@@ -82,6 +84,7 @@ fn base_file(base: &SemanticGraph, file: &SymbolNode) -> BaseFile {
                 name: child.name.clone(),
                 signature: function_signature(child),
                 body: child.body.clone().unwrap_or_default(),
+                doc: metadata_string(&child.metadata, "doc"),
             }),
             _ => {}
         }
@@ -105,6 +108,7 @@ fn base_class(base: &SemanticGraph, class: &SymbolNode) -> BaseClass {
             signature: metadata_string(&method.metadata, "signature")
                 .unwrap_or_else(|| format!("{}(): void", method.name)),
             body: method.body.clone().unwrap_or_default(),
+            doc: metadata_string(&method.metadata, "doc"),
         })
         .collect();
 

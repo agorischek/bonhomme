@@ -47,6 +47,61 @@ export class OrderService {
 }
 
 #[test]
+fn doc_only_edit_is_recovered_as_update() {
+    // P2: editing only a function's TSDoc (signature/body unchanged) must produce an UpdateSymbol
+    // carrying the new doc, so the change survives write-back.
+    let mut operations =
+        import_operations("/** Old summary. */\nexport function run(): void {\n  return;\n}\n");
+    let graph = materialize_operations(operations.clone());
+    let run_id = graph.find_symbol("run")[0].id;
+    let edited = vec![sample_file(
+        "/** New summary. */\nexport function run(): void {\n  return;\n}\n",
+    )];
+
+    let recovered = recover_operations(&graph, &[run_id], &edited).unwrap();
+    assert!(
+        recovered.iter().any(|operation| matches!(
+            operation,
+            Operation::UpdateSymbol { symbol_id, metadata: Some(metadata), .. }
+                if *symbol_id == run_id
+                    && metadata.get("doc").and_then(|doc| doc.as_str())
+                        == Some("/** New summary. */")
+        )),
+        "doc-only edit did not become an UpdateSymbol carrying the new doc: {recovered:?}"
+    );
+
+    operations.extend(recovered);
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(rerendered.contains("/** New summary. */"), "{rerendered}");
+    assert!(!rerendered.contains("/** Old summary. */"), "{rerendered}");
+}
+
+#[test]
+fn body_edit_preserves_existing_doc() {
+    // Regression: UpdateSymbol metadata replaces the whole blob, so a body-only edit must re-attach
+    // the unchanged doc or it would be dropped on the next render.
+    let mut operations =
+        import_operations("/** Keep me. */\nexport function run(): void {\n  return;\n}\n");
+    let graph = materialize_operations(operations.clone());
+    let run_id = graph.find_symbol("run")[0].id;
+    let edited = vec![sample_file(
+        "/** Keep me. */\nexport function run(): void {\n  console.log(\"hi\");\n}\n",
+    )];
+
+    operations.extend(recover_operations(&graph, &[run_id], &edited).unwrap());
+    let rerendered = render_files(&materialize_operations(operations))[0]
+        .content
+        .clone();
+    assert!(
+        rerendered.contains("/** Keep me. */"),
+        "body edit dropped the unchanged doc: {rerendered}"
+    );
+    assert!(rerendered.contains("console.log"), "{rerendered}");
+}
+
+#[test]
 fn renames_clean_method_by_structure() {
     let graph = import_graph(
         r#"

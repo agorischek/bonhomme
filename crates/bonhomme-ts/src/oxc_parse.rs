@@ -37,6 +37,19 @@ impl DocComments {
     }
 }
 
+/// Attach a symbol's TSDoc as `doc` metadata when present. The diff and recover paths rebuild
+/// `UpdateSymbol` metadata from scratch and it replaces the whole blob — without re-attaching the
+/// doc, an edit to a documented symbol would silently drop it.
+pub(crate) fn metadata_with_doc(
+    mut metadata: serde_json::Value,
+    doc: Option<&str>,
+) -> serde_json::Value {
+    if let Some(doc) = doc {
+        metadata["doc"] = serde_json::json!(doc);
+    }
+    metadata
+}
+
 pub(crate) fn with_program<T>(
     path: &str,
     source: &str,
