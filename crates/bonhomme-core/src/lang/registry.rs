@@ -14,6 +14,8 @@ use crate::core::{Operation, ReferenceNode, SemanticGraph, SymbolNode, metadata_
 
 pub use source::read_source_files;
 
+const MAX_DEGRADATION_REPORTS: usize = 20;
+
 /// A [`LanguagePlugin`] that additionally declares which files it claims and a stable name used to
 /// tag the file symbols it produces. The fallback model treats *every* file handler — including the
 /// opaque blob floor — as a `Handler`; a language plugin is simply a handler that claims narrowly.
@@ -225,8 +227,14 @@ impl LanguagePlugin for HandlerRegistry {
                 "bonhomme: {} file(s) degraded to opaque blobs after handler parse errors:",
                 degraded.len()
             );
-            for (handler, path) in &degraded {
+            for (handler, path) in degraded.iter().take(MAX_DEGRADATION_REPORTS) {
                 eprintln!("  {path} (expected {handler})");
+            }
+            if degraded.len() > MAX_DEGRADATION_REPORTS {
+                eprintln!(
+                    "  ... and {} more",
+                    degraded.len() - MAX_DEGRADATION_REPORTS
+                );
             }
         }
         Ok(operations)
@@ -324,11 +332,11 @@ impl HandlerRegistry {
     }
 
     /// Import one handler's file subset, returning the operations and the paths that had to be
-    /// degraded to the blob handler. On a batch import failure (a parse error somewhere), probe each
-    /// file individually so good files still import as their real handler — preserving cross-file
-    /// context among them — and only the genuinely broken files fall back to blob. If even the good
-    /// files fail together, the whole subset degrades. The terminal handler never degrades (there is
-    /// no floor beneath it), and `rejecting_parse_errors` propagates instead.
+    /// degraded to the blob handler. On a batch import failure (a parse error somewhere), bisect
+    /// failed batches to find broken files while keeping the successful files together for the real
+    /// import. If the good files still fail together, import the largest successful chunks and
+    /// degrade only chunks that cannot be isolated further. The terminal handler never degrades
+    /// (there is no floor beneath it), and `rejecting_parse_errors` propagates instead.
     fn import_subset(
         &self,
         index: usize,
@@ -343,31 +351,89 @@ impl HandlerRegistry {
             }
         }
 
-        let mut good = Vec::new();
-        let mut bad = Vec::new();
-        for file in subset {
-            if self.handlers[index]
-                .import(std::slice::from_ref(file))
-                .is_ok()
-            {
-                good.push(file.clone());
-            } else {
-                bad.push(file.clone());
-            }
-        }
+        let mut bad = self.unimportable_files_after_failure(index, subset);
+        let bad_paths = bad
+            .iter()
+            .map(|file| file.path.clone())
+            .collect::<BTreeSet<_>>();
+        let good = subset
+            .iter()
+            .filter(|file| !bad_paths.contains(&file.path))
+            .cloned()
+            .collect::<Vec<_>>();
 
         let mut operations = Vec::new();
         if !good.is_empty() {
             match self.handlers[index].import(&good) {
                 Ok(ops) => operations.extend(ops),
-                // The good files parse alone but not together; degrade them too rather than guess.
-                Err(_) => bad.extend(good),
+                // The good files parse in smaller groups but not together; keep the largest
+                // successful chunks rather than degrading every remaining file.
+                Err(_) => {
+                    let (ops, extra_bad) =
+                        self.import_successful_chunks_after_failure(index, &good)?;
+                    operations.extend(ops);
+                    bad.extend(extra_bad);
+                }
             }
         }
 
         let degraded_paths = bad.iter().map(|file| file.path.clone()).collect();
         operations.extend(self.terminal().import(&bad)?);
         Ok((operations, degraded_paths))
+    }
+
+    fn unimportable_files(&self, index: usize, files: &[RenderedFile]) -> Vec<RenderedFile> {
+        if files.is_empty() || self.handlers[index].import(files).is_ok() {
+            Vec::new()
+        } else {
+            self.unimportable_files_after_failure(index, files)
+        }
+    }
+
+    fn unimportable_files_after_failure(
+        &self,
+        index: usize,
+        files: &[RenderedFile],
+    ) -> Vec<RenderedFile> {
+        if files.len() <= 1 {
+            return files.to_vec();
+        }
+
+        let mid = files.len() / 2;
+        let mut bad = self.unimportable_files(index, &files[..mid]);
+        bad.extend(self.unimportable_files(index, &files[mid..]));
+        bad
+    }
+
+    fn import_successful_chunks_after_failure(
+        &self,
+        index: usize,
+        files: &[RenderedFile],
+    ) -> Result<(Vec<Operation>, Vec<RenderedFile>)> {
+        if files.len() <= 1 {
+            return Ok((Vec::new(), files.to_vec()));
+        }
+
+        let mid = files.len() / 2;
+        let (mut left_ops, mut left_bad) = self.import_successful_chunks(index, &files[..mid])?;
+        let (right_ops, right_bad) = self.import_successful_chunks(index, &files[mid..])?;
+        left_ops.extend(right_ops);
+        left_bad.extend(right_bad);
+        Ok((left_ops, left_bad))
+    }
+
+    fn import_successful_chunks(
+        &self,
+        index: usize,
+        files: &[RenderedFile],
+    ) -> Result<(Vec<Operation>, Vec<RenderedFile>)> {
+        if files.is_empty() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        match self.handlers[index].import(files) {
+            Ok(operations) => Ok((operations, Vec::new())),
+            Err(_) => self.import_successful_chunks_after_failure(index, files),
+        }
     }
 }
 

@@ -30,8 +30,13 @@ impl SemanticGraph {
                 body,
                 metadata,
             } => {
-                if self.symbols.contains_key(symbol_id) {
-                    bail!("duplicate symbol id {symbol_id}");
+                if let Some(existing) = self.symbols.get(symbol_id) {
+                    bail!(
+                        "duplicate symbol id {symbol_id} for {kind} symbol named {name}; \
+                         existing {} symbol named {}",
+                        existing.kind,
+                        existing.name
+                    );
                 }
                 if let Some(parent_id) = parent_id
                     && !self.symbols.contains_key(parent_id)
