@@ -65,9 +65,9 @@ fn editing_one_section_targets_only_that_symbol() {
     assert!(matches!(
         operations.as_slice(),
         [Operation::UpdateSymbol {
-            metadata: Some(_),
+            body: Some(body),
             ..
-        }]
+        }] if body.contains("use it well")
     ));
 }
 

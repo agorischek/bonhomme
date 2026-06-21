@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use anyhow::{Context, Result};
 use bonhomme_core::{
@@ -110,48 +110,8 @@ impl LanguagePlugin for JsonHandler {
         scope: &[Uuid],
         edited: &[RenderedFile],
     ) -> Result<Vec<Operation>> {
-        let base_files = base_files_by_path(base, scope);
-        let mut creates = Vec::new();
-        let mut updates = Vec::new();
-        let mut deletes = Vec::new();
-        let mut edited_paths = BTreeSet::new();
-
-        for file in edited {
-            edited_paths.insert(file.path.clone());
-            match base_files.get(&file.path) {
-                None => creates.extend(import_json_file(&file.path, &file.content)?),
-                Some(file_symbol) => recover_json_file(
-                    base,
-                    file_symbol,
-                    &file.path,
-                    &file.content,
-                    &mut creates,
-                    &mut updates,
-                    &mut deletes,
-                )?,
-            }
-        }
-
-        // A sliced JSON file absent from the edit is deleted — its key children first so the file
-        // symbol has no children when its own delete applies.
-        for (path, file_symbol) in &base_files {
-            if !edited_paths.contains(path) {
-                for child in base.children_of(file_symbol.id) {
-                    deletes.push(Operation::DeleteSymbol {
-                        symbol_id: child.id,
-                    });
-                }
-                deletes.push(Operation::DeleteSymbol {
-                    symbol_id: file_symbol.id,
-                });
-            }
-        }
-
-        // Creates parent-first, then updates, then deletes children-first: a globally valid order.
-        let mut operations = creates;
-        operations.extend(updates);
-        operations.extend(deletes);
-        Ok(operations)
+        let desired_ops = self.import(edited)?;
+        crate::recover_from_imported_operations(base, scope, edited, &desired_ops)
     }
 
     fn read_source_tree(&self, root: &std::path::Path) -> Result<Vec<RenderedFile>> {
@@ -197,7 +157,7 @@ fn import_json_file(path: &str, content: &str) -> Result<Vec<Operation>> {
                 parent_id: None,
                 kind: "file".to_string(),
                 name: path.to_string(),
-                body: None,
+                body: Some(empty_object_document()),
                 metadata: json!({ "handler": "json", "path": path, "top": "object" }),
             }];
             for (key, value) in &map {
@@ -221,98 +181,6 @@ fn import_json_file(path: &str, content: &str) -> Result<Vec<Operation>> {
             metadata: json!({ "handler": "json", "path": path, "top": "other" }),
         }]),
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn recover_json_file(
-    base: &SemanticGraph,
-    file_symbol: &SymbolNode,
-    path: &str,
-    content: &str,
-    creates: &mut Vec<Operation>,
-    updates: &mut Vec<Operation>,
-    deletes: &mut Vec<Operation>,
-) -> Result<()> {
-    if content.len() > MAX_SEMANTIC_JSON_BYTES {
-        for child in base.children_of(file_symbol.id) {
-            deletes.push(Operation::DeleteSymbol {
-                symbol_id: child.id,
-            });
-        }
-        push_file_update_if_needed(
-            file_symbol,
-            Some(oversized_json_document(path, content.len())),
-            oversized_json_metadata(path, content.len()),
-            updates,
-        );
-        return Ok(());
-    }
-
-    let value: Value =
-        serde_json::from_str(content).with_context(|| format!("{path} is not valid JSON"))?;
-    let base_children = base.children_of(file_symbol.id);
-    let base_was_object = !base_children.is_empty();
-
-    match value {
-        Value::Object(map) => {
-            // Key-level diff: identity is the key name, child of the file symbol.
-            let base_by_key: BTreeMap<&str, &SymbolNode> = base_children
-                .iter()
-                .map(|child| (child.name.as_str(), *child))
-                .collect();
-
-            for (key, value) in &map {
-                let fragment = canonical_fragment(value);
-                match base_by_key.get(key.as_str()) {
-                    Some(child) => {
-                        if child.body.as_deref() != Some(fragment.as_str()) {
-                            updates.push(Operation::UpdateSymbol {
-                                symbol_id: child.id,
-                                name: None,
-                                body: Some(fragment),
-                                metadata: None,
-                            });
-                        }
-                    }
-                    None => creates.push(Operation::CreateSymbol {
-                        symbol_id: json_key_id(path, key),
-                        parent_id: Some(file_symbol.id),
-                        kind: KEY_KIND.to_string(),
-                        name: key.clone(),
-                        body: Some(fragment),
-                        metadata: json!({}),
-                    }),
-                }
-            }
-            for child in &base_children {
-                if !map.contains_key(&child.name) {
-                    deletes.push(Operation::DeleteSymbol {
-                        symbol_id: child.id,
-                    });
-                }
-            }
-            push_file_update_if_needed(file_symbol, None, object_json_metadata(path), updates);
-        }
-        other => {
-            // Edited document is no longer an object: drop any key children and store the canonical
-            // document on the file symbol (render prefers children, so the body governs once empty).
-            if base_was_object {
-                for child in &base_children {
-                    deletes.push(Operation::DeleteSymbol {
-                        symbol_id: child.id,
-                    });
-                }
-            }
-            let document = canonical_document(&other);
-            push_file_update_if_needed(
-                file_symbol,
-                Some(document),
-                other_json_metadata(path),
-                updates,
-            );
-        }
-    }
-    Ok(())
 }
 
 fn render_json_file(graph: &SemanticGraph, file_symbol: &SymbolNode) -> String {
@@ -357,12 +225,8 @@ fn canonical_fragment(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string())
 }
 
-fn object_json_metadata(path: &str) -> Value {
-    json!({ "handler": "json", "path": path, "top": "object" })
-}
-
-fn other_json_metadata(path: &str) -> Value {
-    json!({ "handler": "json", "path": path, "top": "other" })
+fn empty_object_document() -> String {
+    "{}\n".to_string()
 }
 
 fn oversized_json_metadata(path: &str, byte_len: usize) -> Value {
@@ -385,26 +249,6 @@ fn oversized_json_document(path: &str, byte_len: usize) -> String {
             "maxSemanticBytes": MAX_SEMANTIC_JSON_BYTES,
         }
     }))
-}
-
-fn push_file_update_if_needed(
-    file_symbol: &SymbolNode,
-    body: Option<String>,
-    metadata: Value,
-    updates: &mut Vec<Operation>,
-) {
-    let body_changed = body
-        .as_ref()
-        .is_some_and(|body| file_symbol.body.as_deref() != Some(body.as_str()));
-    let metadata_changed = file_symbol.metadata != metadata;
-    if body_changed || metadata_changed {
-        updates.push(Operation::UpdateSymbol {
-            symbol_id: file_symbol.id,
-            name: None,
-            body: if body_changed { body } else { None },
-            metadata: metadata_changed.then_some(metadata),
-        });
-    }
 }
 
 fn metadata_top(symbol: &SymbolNode) -> Option<&str> {
@@ -434,26 +278,6 @@ fn file_symbols(graph: &SemanticGraph) -> impl Iterator<Item = &SymbolNode> {
         .root_symbols()
         .into_iter()
         .filter(|symbol| symbol.kind == "file")
-}
-
-fn base_files_by_path<'a>(
-    base: &'a SemanticGraph,
-    scope: &[Uuid],
-) -> BTreeMap<String, &'a SymbolNode> {
-    let ids: Vec<Uuid> = if scope.is_empty() {
-        file_symbols(base).map(|symbol| symbol.id).collect()
-    } else {
-        scope
-            .iter()
-            .filter_map(|id| base.symbols.get(id))
-            .filter_map(|symbol| nearest_file_symbol(base, symbol))
-            .map(|symbol| symbol.id)
-            .collect()
-    };
-    ids.into_iter()
-        .filter_map(|id| base.symbols.get(&id))
-        .map(|symbol| (file_path(symbol), symbol))
-        .collect()
 }
 
 fn file_path(symbol: &SymbolNode) -> String {
@@ -606,6 +430,38 @@ mod tests {
             JsonHandler.render(&graph)[0].content,
             "[\n  1,\n  2,\n  3\n]\n"
         );
+    }
+
+    #[test]
+    fn recover_non_object_to_object_replaces_file_body() {
+        let mut graph = graph_from(
+            &JsonHandler
+                .import(&[rendered("a.json", "[1, 2, 3]")])
+                .unwrap(),
+        );
+        let scope: Vec<Uuid> = graph.root_symbols().iter().map(|s| s.id).collect();
+        let operations = JsonHandler
+            .recover_operations(&graph, &scope, &[rendered("a.json", r#"{"x":1}"#)])
+            .unwrap();
+
+        assert!(operations.iter().any(|op| matches!(
+            op,
+            Operation::UpdateSymbol {
+                body: Some(body),
+                metadata: Some(metadata),
+                ..
+            } if body == "{}\n" && metadata.get("top").and_then(Value::as_str) == Some("object")
+        )));
+
+        for (index, operation) in operations.iter().enumerate() {
+            graph
+                .apply_operation(Uuid::from_u128(index as u128 + 1), operation)
+                .unwrap();
+        }
+
+        let file = graph.root_symbols().into_iter().next().unwrap();
+        assert_eq!(file.body.as_deref(), Some("{}\n"));
+        assert_eq!(JsonHandler.render(&graph)[0].content, "{\n  \"x\": 1\n}\n");
     }
 
     #[test]

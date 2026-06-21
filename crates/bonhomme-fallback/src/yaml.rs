@@ -108,45 +108,8 @@ impl LanguagePlugin for YamlHandler {
         scope: &[Uuid],
         edited: &[RenderedFile],
     ) -> Result<Vec<Operation>> {
-        let base_files = base_files_by_path(base, scope);
-        let mut creates = Vec::new();
-        let mut updates = Vec::new();
-        let mut deletes = Vec::new();
-        let mut edited_paths = BTreeSet::new();
-
-        for file in edited {
-            edited_paths.insert(file.path.clone());
-            match base_files.get(&file.path) {
-                None => creates.extend(import_file(&file.path, &file.content)),
-                Some(file_symbol) => recover_file(
-                    base,
-                    file_symbol,
-                    &file.path,
-                    &file.content,
-                    &mut creates,
-                    &mut updates,
-                    &mut deletes,
-                ),
-            }
-        }
-
-        for (path, file_symbol) in &base_files {
-            if !edited_paths.contains(path) {
-                for child in base.children_of(file_symbol.id) {
-                    deletes.push(Operation::DeleteSymbol {
-                        symbol_id: child.id,
-                    });
-                }
-                deletes.push(Operation::DeleteSymbol {
-                    symbol_id: file_symbol.id,
-                });
-            }
-        }
-
-        let mut operations = creates;
-        operations.extend(updates);
-        operations.extend(deletes);
-        Ok(operations)
+        let desired_ops = self.import(edited)?;
+        crate::recover_from_imported_operations(base, scope, edited, &desired_ops)
     }
 
     fn read_source_tree(&self, root: &std::path::Path) -> Result<Vec<RenderedFile>> {
@@ -252,58 +215,6 @@ fn import_file(path: &str, content: &str) -> Vec<Operation> {
     operations
 }
 
-fn recover_file(
-    base: &SemanticGraph,
-    file_symbol: &SymbolNode,
-    path: &str,
-    content: &str,
-    creates: &mut Vec<Operation>,
-    updates: &mut Vec<Operation>,
-    deletes: &mut Vec<Operation>,
-) {
-    let parsed = parse_yaml(content);
-
-    if metadata_string(&file_symbol.metadata, "preamble").unwrap_or_default() != parsed.preamble {
-        updates.push(Operation::UpdateSymbol {
-            symbol_id: file_symbol.id,
-            name: None,
-            body: None,
-            metadata: Some(file_metadata(path, &parsed.preamble)),
-        });
-    }
-
-    let base_by_name: BTreeMap<&str, &SymbolNode> = base
-        .children_of(file_symbol.id)
-        .into_iter()
-        .filter(|child| child.kind == NODE_KIND)
-        .map(|child| (child.name.as_str(), child))
-        .collect();
-    let edited_names: BTreeSet<&str> = parsed.sections.iter().map(|s| s.name.as_str()).collect();
-
-    for section in &parsed.sections {
-        match base_by_name.get(section.name.as_str()) {
-            Some(child) => {
-                if child.body.as_deref() != Some(section.body.as_str()) {
-                    updates.push(Operation::UpdateSymbol {
-                        symbol_id: child.id,
-                        name: None,
-                        body: Some(section.body.clone()),
-                        metadata: None,
-                    });
-                }
-            }
-            None => creates.push(section_create(path, file_symbol.id, section)),
-        }
-    }
-    for (name, child) in &base_by_name {
-        if !edited_names.contains(name) {
-            deletes.push(Operation::DeleteSymbol {
-                symbol_id: child.id,
-            });
-        }
-    }
-}
-
 fn render_file(graph: &SemanticGraph, file_symbol: &SymbolNode) -> String {
     let mut content = metadata_string(&file_symbol.metadata, "preamble").unwrap_or_default();
     for child in graph.children_of(file_symbol.id) {
@@ -334,26 +245,6 @@ fn file_symbols(graph: &SemanticGraph) -> impl Iterator<Item = &SymbolNode> {
         .root_symbols()
         .into_iter()
         .filter(|symbol| symbol.kind == "file")
-}
-
-fn base_files_by_path<'a>(
-    base: &'a SemanticGraph,
-    scope: &[Uuid],
-) -> BTreeMap<String, &'a SymbolNode> {
-    let ids: Vec<Uuid> = if scope.is_empty() {
-        file_symbols(base).map(|symbol| symbol.id).collect()
-    } else {
-        scope
-            .iter()
-            .filter_map(|id| base.symbols.get(id))
-            .filter_map(|symbol| nearest_file_symbol(base, symbol))
-            .map(|symbol| symbol.id)
-            .collect()
-    };
-    ids.into_iter()
-        .filter_map(|id| base.symbols.get(&id))
-        .map(|symbol| (file_path(symbol), symbol))
-        .collect()
 }
 
 fn file_path(symbol: &SymbolNode) -> String {

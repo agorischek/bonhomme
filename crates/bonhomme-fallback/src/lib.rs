@@ -17,12 +17,39 @@ mod toml;
 mod treesitter;
 mod yaml;
 
+use std::collections::BTreeSet;
+
+use anyhow::Result;
+use bonhomme_core::{
+    DesiredRecoveryOptions, Operation, RenderedFile, SemanticGraph, recover_from_desired_operations,
+};
+use uuid::Uuid;
+
 pub use bonhomme_core::BlobHandler;
 pub use json::JsonHandler;
 pub use markdown::MarkdownHandler;
 pub use toml::TomlHandler;
 pub use treesitter::TreeSitterHandler;
 pub use yaml::YamlHandler;
+
+pub(crate) fn recover_from_imported_operations(
+    base: &SemanticGraph,
+    scope: &[Uuid],
+    edited: &[RenderedFile],
+    desired_operations: &[Operation],
+) -> Result<Vec<Operation>> {
+    recover_from_desired_operations(
+        base,
+        scope,
+        &edited_paths(edited),
+        desired_operations,
+        DesiredRecoveryOptions::all_missing_references(),
+    )
+}
+
+fn edited_paths(edited: &[RenderedFile]) -> BTreeSet<String> {
+    edited.iter().map(|file| file.path.clone()).collect()
+}
 
 #[cfg(test)]
 mod test_support {
