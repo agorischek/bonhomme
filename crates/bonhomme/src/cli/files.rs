@@ -1,11 +1,16 @@
 use std::path::Path;
 
 use anyhow::Result;
-use bonhomme_core::RenderedFile;
+use bonhomme_core::{RenderedFile, Slice};
 use tokio::fs;
+use uuid::Uuid;
 
 pub(super) async fn read_rendered_files(path: &Path) -> Result<Vec<RenderedFile>> {
     let raw = fs::read_to_string(path).await?;
+    if let Ok(slice) = serde_json::from_str::<Slice>(&raw) {
+        return Ok(slice.files);
+    }
+
     if let Ok(files) = serde_json::from_str::<Vec<RenderedFile>>(&raw) {
         return Ok(files);
     }
@@ -23,4 +28,11 @@ pub(super) async fn read_rendered_files(path: &Path) -> Result<Vec<RenderedFile>
         path: file_name,
         content: raw,
     }])
+}
+
+pub(super) async fn read_slice_id(path: &Path) -> Result<Option<Uuid>> {
+    let raw = fs::read_to_string(path).await?;
+    Ok(serde_json::from_str::<Slice>(&raw)
+        .ok()
+        .map(|slice| slice.id))
 }

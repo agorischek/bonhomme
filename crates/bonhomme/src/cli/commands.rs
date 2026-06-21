@@ -15,7 +15,7 @@ use std::{
 use tokio::fs;
 use uuid::Uuid;
 
-use super::files::read_rendered_files;
+use super::files::{read_rendered_files, read_slice_id};
 use super::queries::{
     print_related_symbols, resolve_symbol, select_callees, select_callers, select_dependencies,
     select_dependents,
@@ -529,6 +529,7 @@ pub(super) async fn run_storage_command(
     root: &Path,
 ) -> Result<()> {
     match command {
+        Command::Agents(_) => unreachable!("handled before storage command dispatch"),
         Command::Server(_) => unreachable!("handled before storage command dispatch"),
         Command::Explore(_) => unreachable!("handled before storage command dispatch"),
         Command::Session { .. } => unreachable!("handled before storage command dispatch"),
@@ -595,8 +596,10 @@ pub(super) async fn run_storage_command(
             SliceCommand::Apply(args) => {
                 let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
                 let repository = storage.repository_by_name(&repo).await?;
+                let modified_slice_id = read_slice_id(&args.modified).await?;
                 let modified = read_rendered_files(&args.modified).await?;
-                let (branch, operations, audit_context) = if let Some(slice_id) = args.slice_id {
+                let slice_id = args.slice_id.or(modified_slice_id);
+                let (branch, operations, audit_context) = if let Some(slice_id) = slice_id {
                     let stored_slice = storage.slice_by_id(slice_id).await?;
                     if stored_slice.repository_id != repository.id {
                         bail!("slice {slice_id} does not belong to repository {}", repo);

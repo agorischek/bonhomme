@@ -20,8 +20,15 @@ last started URL to `.bonhomme/explorer.json`. If no storage URL is configured, 
 project-local embedded Turso database at `.bonhomme/bonhomme.db`.
 
 Repo-scoped commands infer the logical repository name from the active session manifest, then the
-current repo root directory. Pass `--repo` only when addressing a different logical repository in
-the same database.
+current repo root directory. They also use the active session database automatically when one exists.
+Pass `--repo` or `--database-url` only when addressing a different logical repository or storage
+target.
+
+For repo-specific agent instructions:
+
+```sh
+cargo run -p bonhomme -- agents
+```
 
 The React demo is still available as a development dashboard for simulations:
 
@@ -125,6 +132,7 @@ Then watch `OrderService` grow realistic methods while the graph and operation l
 
 ```sh
 bonhomme init --name bonhomme-demo
+bonhomme agents
 bonhomme import --repo imported-ts --path examples/typescript-basic --reset
 bonhomme import --repo imported-go --path examples/go-basic --reset
 bonhomme import --repo imported-rust --path examples/rust-basic --reset

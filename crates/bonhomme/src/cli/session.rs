@@ -36,6 +36,30 @@ struct SessionManifest {
     source_path: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ActiveSession {
+    pub database_url: String,
+    pub repository: String,
+    pub branch: String,
+    pub base_position: i64,
+    pub root: String,
+    pub source_path: String,
+}
+
+impl From<SessionManifest> for ActiveSession {
+    fn from(manifest: SessionManifest) -> Self {
+        Self {
+            database_url: manifest.database_url,
+            repository: manifest.repository,
+            branch: manifest.branch,
+            base_position: manifest.base_position,
+            root: manifest.root,
+            source_path: manifest.source_path,
+        }
+    }
+}
+
 /// The outcome of importing a tree and rendering it back, bucketed by fidelity. A diff-clean
 /// round-trip — the prerequisite for trustworthy write-back — has empty `reformatted`/`dropped`/
 /// `added`.
@@ -125,9 +149,13 @@ async fn read_session_manifest(root: &Path) -> Result<Option<SessionManifest>> {
 }
 
 pub(super) async fn active_repository_name(root: &Path) -> Result<Option<String>> {
-    Ok(read_session_manifest(root)
+    Ok(active_session(root)
         .await?
-        .map(|manifest| manifest.repository))
+        .map(|session| session.repository))
+}
+
+pub(super) async fn active_session(root: &Path) -> Result<Option<ActiveSession>> {
+    Ok(read_session_manifest(root).await?.map(ActiveSession::from))
 }
 
 async fn write_session_manifest(root: &Path, manifest: &SessionManifest) -> Result<()> {

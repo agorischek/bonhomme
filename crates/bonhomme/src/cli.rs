@@ -1,9 +1,10 @@
 mod commands;
 mod files;
 mod queries;
-mod session;
+pub(crate) mod session;
 mod slice_audit;
 
+use crate::agents;
 use crate::api;
 use crate::explorer;
 use anyhow::{Context, Result};
@@ -22,8 +23,8 @@ use uuid::Uuid;
     about = "Semantic source control prototype for TypeScript/JavaScript, Go, Rust, Python, C#, and Elixir"
 )]
 struct Cli {
-    /// Storage URL. Precedence: this flag > DATABASE_URL env > bonhomme.toml > the project-local
-    /// Turso default (`turso:.bonhomme/bonhomme.db`). `postgres://…` selects the hosted backend.
+    /// Storage URL. Precedence: this flag / DATABASE_URL env > active session for repo-scoped
+    /// commands > bonhomme.toml > the project-local Turso default.
     #[arg(long, env = "DATABASE_URL", global = true)]
     database_url: Option<String>,
     #[command(subcommand)]
@@ -32,6 +33,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print repo-specific instructions for coding agents.
+    Agents(agents::AgentsArgs),
     /// Serve the React demo/API used for development simulations.
     Server(ServerArgs),
     /// Serve one lightweight repo-scoped explorer instance from the core CLI.
@@ -171,10 +174,12 @@ struct SliceApplyArgs {
     title: String,
     #[arg(long, default_value = "agent")]
     agent: String,
+    /// Stored slice ID. Inferred when --modified is a full slice JSON object.
     #[arg(long)]
     slice_id: Option<Uuid>,
     #[arg(long)]
     original: Option<PathBuf>,
+    /// Edited rendered file(s), or the full slice JSON returned by `slice create`.
     #[arg(long)]
     modified: PathBuf,
 }
@@ -342,14 +347,40 @@ pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     let (config, root) = crate::config::discover(&std::env::current_dir()?)?;
     let explicit_database_url = cli.database_url.clone();
-    let database_url = crate::config::resolve_database_url(cli.database_url, &config, &root);
+    let active_session = if command_uses_active_session_database(&cli.command) {
+        session::active_session(&root).await?
+    } else {
+        None
+    };
+    let database_url = resolve_database_url_for_command(
+        explicit_database_url.clone(),
+        &config,
+        &root,
+        active_session.as_ref(),
+        &cli.command,
+    );
 
     match cli.command {
+        Command::Agents(args) => {
+            agents::run(
+                args,
+                &config,
+                &root,
+                active_session.as_ref(),
+                explicit_database_url.as_deref(),
+                &database_url,
+            )
+            .await
+        }
         Command::Server(args) => api::serve(Some(database_url), &config, args.addr).await,
         Command::Explore(args) => {
             let repository_name = match args.repo {
                 Some(repo) => repo,
-                None => default_repository_name(&root)?,
+                None => active_session
+                    .as_ref()
+                    .map(|session| session.repository.clone())
+                    .map(Ok)
+                    .unwrap_or_else(|| default_repository_name(&root))?,
             };
             let storage =
                 Storage::connect(&database_url, crate::plugins::language_registry(&config)).await?;
@@ -376,6 +407,41 @@ pub async fn run() -> Result<()> {
             run_storage_command(storage, command, &root).await
         }
     }
+}
+
+fn resolve_database_url_for_command(
+    explicit_database_url: Option<String>,
+    config: &crate::config::Config,
+    root: &Path,
+    active_session: Option<&session::ActiveSession>,
+    command: &Command,
+) -> String {
+    if let Some(database_url) = explicit_database_url {
+        return database_url;
+    }
+    if command_uses_active_session_database(command)
+        && let Some(session) = active_session
+    {
+        return session.database_url.clone();
+    }
+    crate::config::resolve_database_url(None, config, root)
+}
+
+fn command_uses_active_session_database(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Agents(_)
+            | Command::Explore(_)
+            | Command::Init(_)
+            | Command::Import(_)
+            | Command::Branch { .. }
+            | Command::Task { .. }
+            | Command::Slice { .. }
+            | Command::Merge(_)
+            | Command::Validate(_)
+            | Command::Render(_)
+            | Command::Query { .. }
+    )
 }
 
 fn default_repository_name(root: &Path) -> Result<String> {
