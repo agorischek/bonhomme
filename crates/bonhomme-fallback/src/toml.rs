@@ -289,7 +289,7 @@ fn scan_line(
     let mut i = 0;
     while i < bytes.len() {
         if *in_basic_multiline {
-            if line[i..].starts_with("\"\"\"") {
+            if bytes[i..].starts_with(b"\"\"\"") {
                 *in_basic_multiline = false;
                 i += 3;
             } else {
@@ -298,7 +298,7 @@ fn scan_line(
             continue;
         }
         if *in_literal_multiline {
-            if line[i..].starts_with("'''") {
+            if bytes[i..].starts_with(b"'''") {
                 *in_literal_multiline = false;
                 i += 3;
             } else {
@@ -311,7 +311,7 @@ fn scan_line(
         match c {
             b'#' => return, // comment to end of line
             b'"' => {
-                if line[i..].starts_with("\"\"\"") {
+                if bytes[i..].starts_with(b"\"\"\"") {
                     *in_basic_multiline = true;
                     i += 3;
                 } else {
@@ -319,7 +319,7 @@ fn scan_line(
                 }
             }
             b'\'' => {
-                if line[i..].starts_with("'''") {
+                if bytes[i..].starts_with(b"'''") {
                     *in_literal_multiline = true;
                     i += 3;
                 } else {
@@ -601,6 +601,16 @@ mod tests {
         let parsed = parse_toml(doc);
         assert_eq!(parsed.sections.len(), 1, "only [table] is a header");
         // Byte-stable regardless.
+        let graph = graph_from(&TomlHandler.import(&[rendered("a.toml", doc)]).unwrap());
+        assert_eq!(TomlHandler.render(&graph)[0].content, doc);
+    }
+
+    #[test]
+    fn multiline_strings_with_non_ascii_do_not_panic_scanner() {
+        let doc = "description = \"\"\"\nこれは\n\"\"\"\n\n[table]\nkey = 1\n";
+        let parsed = parse_toml(doc);
+        assert_eq!(parsed.sections.len(), 1);
+
         let graph = graph_from(&TomlHandler.import(&[rendered("a.toml", doc)]).unwrap());
         assert_eq!(TomlHandler.render(&graph)[0].content, doc);
     }

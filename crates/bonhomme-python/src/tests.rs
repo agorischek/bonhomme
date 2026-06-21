@@ -129,6 +129,27 @@ def format_order(value: str) -> str:
     assert!(callees.iter().any(|callee| callee.id == format_order_id));
 }
 
+#[test]
+fn import_collapses_repeated_top_level_values_to_last_assignment() {
+    let graph = import_graph(
+        r#"
+deep_dir = "./0"
+deep_dir = "./1"
+"#,
+    );
+    let values = graph
+        .find_symbol("deep_dir")
+        .into_iter()
+        .filter(|symbol| symbol.kind == "value")
+        .collect::<Vec<_>>();
+
+    assert_eq!(values.len(), 1);
+    assert_eq!(
+        values[0].metadata["declaration"].as_str(),
+        Some("deep_dir = \"./1\"")
+    );
+}
+
 fn sample_source() -> &'static str {
     r#"
 from __future__ import annotations

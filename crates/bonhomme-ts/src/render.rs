@@ -107,7 +107,9 @@ fn split_shebang(preamble: &str) -> (Option<&str>, &str) {
 fn render_symbol(graph: &SemanticGraph, symbol: &SymbolNode, indent: usize, out: &mut String) {
     match symbol.kind.as_str() {
         "class" => render_class(graph, symbol, indent, out),
-        "method" | "getter" | "setter" => render_method(symbol, indent, out),
+        "method" | "static-method" | "getter" | "static-getter" | "setter" | "static-setter" => {
+            render_method(symbol, indent, out)
+        }
         "function" => render_function(symbol, indent, out),
         "property" => render_property(symbol, indent, out),
         _ => {

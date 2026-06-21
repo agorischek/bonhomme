@@ -260,7 +260,7 @@ fn import_method(
 ) -> Option<(Uuid, Operation, Vec<CallTarget>)> {
     let body = method.value.body.as_ref()?;
     let name = property_key_name(&method.key)?;
-    let symbol_kind = method_symbol_kind(method.kind);
+    let symbol_kind = method_symbol_kind(method);
     let method_id = stable_import_uuid(&format!("{symbol_kind}:{}:{class_id}:{name}", file.path));
     let signature = strip_symbol_comments(&declaration_before_body(
         &file.content,
@@ -278,17 +278,21 @@ fn import_method(
             metadata: json!({
                 "signature": signature,
                 "methodKind": format!("{:?}", method.kind),
+                "static": method.r#static,
             }),
         },
         collect_function_calls(&method.value),
     ))
 }
 
-fn method_symbol_kind(kind: MethodDefinitionKind) -> &'static str {
-    match kind {
-        MethodDefinitionKind::Get => "getter",
-        MethodDefinitionKind::Set => "setter",
-        _ => "method",
+fn method_symbol_kind(method: &MethodDefinition<'_>) -> &'static str {
+    match (method.r#static, method.kind) {
+        (true, MethodDefinitionKind::Get) => "static-getter",
+        (true, MethodDefinitionKind::Set) => "static-setter",
+        (true, _) => "static-method",
+        (false, MethodDefinitionKind::Get) => "getter",
+        (false, MethodDefinitionKind::Set) => "setter",
+        (false, _) => "method",
     }
 }
 

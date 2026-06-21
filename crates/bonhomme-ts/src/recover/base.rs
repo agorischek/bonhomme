@@ -98,7 +98,7 @@ fn base_class(base: &SemanticGraph, class: &SymbolNode) -> BaseClass {
     let methods = base
         .children_of(class.id)
         .into_iter()
-        .filter(|symbol| symbol.kind == "method")
+        .filter(|symbol| matches!(symbol.kind.as_str(), "method" | "static-method"))
         .map(|method| BaseMethod {
             id: method.id,
             name: method.name.clone(),

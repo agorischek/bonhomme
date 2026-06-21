@@ -526,6 +526,33 @@ export class Store extends Base<{ id: number }> {
 }
 
 #[test]
+fn import_distinguishes_static_and_instance_methods_with_same_name() {
+    let graph = import_graph(
+        r#"
+export class Config {
+  static async fetch(): Promise<Config> {
+    return new Config();
+  }
+
+  async fetch(): Promise<void> {
+    return;
+  }
+}
+"#,
+    );
+    let methods = graph
+        .find_symbol("fetch")
+        .into_iter()
+        .filter(|symbol| matches!(symbol.kind.as_str(), "method" | "static-method"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(methods.len(), 2);
+    assert!(methods.iter().any(|symbol| symbol.kind == "method"));
+    assert!(methods.iter().any(|symbol| symbol.kind == "static-method"));
+    assert_ne!(methods[0].id, methods[1].id);
+}
+
+#[test]
 fn diff_matches_comment_dropped_edits_by_name() {
     let file_id = Uuid::new_v4();
     let format_id = Uuid::new_v4();

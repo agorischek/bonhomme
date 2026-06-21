@@ -287,11 +287,15 @@ fn file_operation(file: &ParsedFile) -> Operation {
 fn declaration_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Vec<Operation> {
     let mut operations = Vec::new();
     let file_id = file_id(&file.path);
-    for declaration in &file.declarations {
+    let last_value_indexes = last_declaration_indexes(&file.declarations, "value");
+    for (index, declaration) in file.declarations.iter().enumerate() {
         match declaration.kind.as_str() {
             "class" => operations.extend(class_operations(file, file_id, declaration, indexes)),
             "function" => operations.push(function_operation(file, file_id, declaration)),
-            "value" => operations.push(value_operation(file, file_id, declaration)),
+            "value" if last_value_indexes.get(&declaration.name) == Some(&index) => {
+                operations.push(value_operation(file, file_id, declaration));
+            }
+            "value" => {}
             _ => {}
         }
     }
@@ -305,6 +309,7 @@ fn class_operations(
     indexes: &mut ImportIndexes,
 ) -> Vec<Operation> {
     let symbol_id = class_id(&file.path, &declaration.name);
+    let last_attribute_indexes = last_member_indexes(&declaration.attributes);
     let mut operations = vec![Operation::CreateSymbol {
         symbol_id,
         parent_id: Some(file_id),
@@ -317,7 +322,10 @@ fn class_operations(
             "path": file.path,
         }),
     }];
-    for attribute in &declaration.attributes {
+    for (index, attribute) in declaration.attributes.iter().enumerate() {
+        if last_attribute_indexes.get(&attribute.name) != Some(&index) {
+            continue;
+        }
         operations.push(Operation::CreateSymbol {
             symbol_id: attribute_id(symbol_id, &attribute.name),
             parent_id: Some(symbol_id),
@@ -334,6 +342,23 @@ fn class_operations(
         operations.push(method_operation(file, symbol_id, method, indexes));
     }
     operations
+}
+
+fn last_declaration_indexes(declarations: &[Declaration], kind: &str) -> BTreeMap<String, usize> {
+    declarations
+        .iter()
+        .enumerate()
+        .filter(|(_, declaration)| declaration.kind == kind)
+        .map(|(index, declaration)| (declaration.name.clone(), index))
+        .collect()
+}
+
+fn last_member_indexes(members: &[Member]) -> BTreeMap<String, usize> {
+    members
+        .iter()
+        .enumerate()
+        .map(|(index, member)| (member.name.clone(), index))
+        .collect()
 }
 
 fn function_operation(file: &ParsedFile, file_id: Uuid, declaration: &Declaration) -> Operation {
