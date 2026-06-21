@@ -144,10 +144,13 @@ fn non_method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Resu
                     kind: "function".to_string(),
                     name: declaration.name.clone(),
                     body: declaration.body.clone(),
-                    metadata: json!({
-                        "signature": declaration.signature.as_deref().unwrap_or(""),
-                        "path": file.path,
-                    }),
+                    metadata: with_doc(
+                        json!({
+                            "signature": declaration.signature.as_deref().unwrap_or(""),
+                            "path": file.path,
+                        }),
+                        declaration,
+                    ),
                 });
             }
             "const" | "var" | "type" => {
@@ -157,10 +160,13 @@ fn non_method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Resu
                     kind: declaration.kind.clone(),
                     name: declaration.name.clone(),
                     body: None,
-                    metadata: json!({
-                        "declaration": declaration.declaration.as_deref().unwrap_or(""),
-                        "path": file.path,
-                    }),
+                    metadata: with_doc(
+                        json!({
+                            "declaration": declaration.declaration.as_deref().unwrap_or(""),
+                            "path": file.path,
+                        }),
+                        declaration,
+                    ),
                 });
             }
             "method" => {}
@@ -199,14 +205,27 @@ fn method_operations(file: &ParsedFile, indexes: &mut ImportIndexes) -> Result<V
             kind: "method".to_string(),
             name: declaration.name.clone(),
             body: declaration.body.clone(),
-            metadata: json!({
-                "signature": declaration.signature.as_deref().unwrap_or(""),
-                "receiver": receiver,
-                "path": file.path,
-            }),
+            metadata: with_doc(
+                json!({
+                    "signature": declaration.signature.as_deref().unwrap_or(""),
+                    "receiver": receiver,
+                    "path": file.path,
+                }),
+                declaration,
+            ),
         });
     }
     Ok(operations)
+}
+
+/// Attach a declaration's godoc comment (`// …` above it) as `doc` metadata, so it renders back.
+fn with_doc(mut metadata: serde_json::Value, declaration: &Declaration) -> serde_json::Value {
+    if let Some(doc) = &declaration.doc
+        && !doc.is_empty()
+    {
+        metadata["doc"] = json!(doc);
+    }
+    metadata
 }
 
 fn struct_operations(
@@ -222,9 +241,12 @@ fn struct_operations(
         kind: "struct".to_string(),
         name: declaration.name.clone(),
         body: None,
-        metadata: json!({
-            "declaration": declaration.declaration.as_deref().unwrap_or(""),
-        }),
+        metadata: with_doc(
+            json!({
+                "declaration": declaration.declaration.as_deref().unwrap_or(""),
+            }),
+            declaration,
+        ),
     }];
     for field in &declaration.fields {
         operations.push(Operation::CreateSymbol {
@@ -252,9 +274,12 @@ fn interface_operations(
         kind: "interface".to_string(),
         name: declaration.name.clone(),
         body: None,
-        metadata: json!({
-            "declaration": declaration.declaration.as_deref().unwrap_or(""),
-        }),
+        metadata: with_doc(
+            json!({
+                "declaration": declaration.declaration.as_deref().unwrap_or(""),
+            }),
+            declaration,
+        ),
     }];
     for method in &declaration.methods {
         operations.push(Operation::CreateSymbol {

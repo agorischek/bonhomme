@@ -80,6 +80,7 @@ fn render_top_level_symbol(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut
 fn render_struct(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut String) {
     let declaration = metadata_string(&symbol.metadata, "declaration")
         .unwrap_or_else(|| format!("type {} struct", symbol.name));
+    render_doc(symbol, out);
     out.push_str(&declaration);
     out.push_str(" {\n");
     for child in graph.children_of(symbol.id) {
@@ -103,6 +104,7 @@ fn render_struct(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut String) {
 fn render_interface(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut String) {
     let declaration = metadata_string(&symbol.metadata, "declaration")
         .unwrap_or_else(|| format!("type {} interface", symbol.name));
+    render_doc(symbol, out);
     out.push_str(&declaration);
     out.push_str(" {\n");
     for child in graph.children_of(symbol.id) {
@@ -120,6 +122,7 @@ fn render_interface(graph: &SemanticGraph, symbol: &SymbolNode, out: &mut String
 fn render_function(symbol: &SymbolNode, out: &mut String) {
     let signature = metadata_string(&symbol.metadata, "signature")
         .unwrap_or_else(|| format!("func {}()", symbol.name));
+    render_doc(symbol, out);
     out.push_str(signature.trim());
     out.push_str(" {\n");
     if let Some(body) = &symbol.body {
@@ -134,8 +137,18 @@ fn render_function(symbol: &SymbolNode, out: &mut String) {
 
 fn render_declaration(symbol: &SymbolNode, out: &mut String) {
     if let Some(declaration) = metadata_string(&symbol.metadata, "declaration") {
+        render_doc(symbol, out);
         out.push_str(declaration.trim());
         out.push_str("\n\n");
+    }
+}
+
+/// Emit a symbol's godoc (`// …`, stored as `doc` metadata) above its declaration; gofmt then
+/// normalizes spacing.
+fn render_doc(symbol: &SymbolNode, out: &mut String) {
+    if let Some(doc) = metadata_string(&symbol.metadata, "doc") {
+        out.push_str(doc.trim_end());
+        out.push('\n');
     }
 }
 

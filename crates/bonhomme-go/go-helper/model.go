@@ -32,6 +32,7 @@ type declaration struct {
 	Signature   string       `json:"signature,omitempty"`
 	Body        string       `json:"body,omitempty"`
 	Declaration string       `json:"declaration,omitempty"`
+	Doc         string       `json:"doc,omitempty"`
 	Fields      []field      `json:"fields,omitempty"`
 	Methods     []method     `json:"methods,omitempty"`
 	Calls       []callTarget `json:"calls,omitempty"`

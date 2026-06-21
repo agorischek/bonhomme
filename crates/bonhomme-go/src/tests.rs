@@ -220,6 +220,32 @@ func (s *OrderService) Summary() string {
 "#
 }
 
+#[test]
+fn godoc_comments_round_trip() {
+    // Regression: leading `// …` doc comments above Go declarations were dropped on render.
+    let source = "package order\n\n\
+// Greeter greets people by name.\n\
+type Greeter struct {\n\tName string\n}\n\n\
+// Hello returns a greeting for the receiver.\n\
+func (g Greeter) Hello() string {\n\treturn g.Name\n}\n\n\
+// Version is the build version.\n\
+const Version = \"1.0\"\n";
+    let content = render_files(&import_graph(source))[0].content.clone();
+
+    assert!(
+        content.contains("// Greeter greets people by name."),
+        "struct doc dropped: {content}"
+    );
+    assert!(
+        content.contains("// Hello returns a greeting for the receiver."),
+        "method doc dropped: {content}"
+    );
+    assert!(
+        content.contains("// Version is the build version."),
+        "const doc dropped: {content}"
+    );
+}
+
 fn import_graph(content: &str) -> SemanticGraph {
     materialize_operations(import_operations(content))
 }

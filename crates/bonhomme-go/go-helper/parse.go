@@ -105,7 +105,7 @@ func parseGenDecl(input parsedInput, decl *ast.GenDecl) []declaration {
 	for _, spec := range decl.Specs {
 		switch spec := spec.(type) {
 		case *ast.TypeSpec:
-			declarations = append(declarations, parseTypeSpec(input, spec))
+			declarations = append(declarations, parseTypeSpec(input, decl, spec))
 		case *ast.ValueSpec:
 			declarations = append(declarations, parseValueSpec(input, decl, spec)...)
 		}
@@ -113,13 +113,15 @@ func parseGenDecl(input parsedInput, decl *ast.GenDecl) []declaration {
 	return declarations
 }
 
-func parseTypeSpec(input parsedInput, spec *ast.TypeSpec) declaration {
+func parseTypeSpec(input parsedInput, decl *ast.GenDecl, spec *ast.TypeSpec) declaration {
+	doc := declDoc(spec.Doc, decl)
 	switch typed := spec.Type.(type) {
 	case *ast.StructType:
 		return declaration{
 			Kind:        "struct",
 			Name:        spec.Name.Name,
 			Declaration: fmt.Sprintf("type %s struct", spec.Name.Name),
+			Doc:         doc,
 			Fields:      parseFields(input, typed.Fields),
 		}
 	case *ast.InterfaceType:
@@ -127,6 +129,7 @@ func parseTypeSpec(input parsedInput, spec *ast.TypeSpec) declaration {
 			Kind:        "interface",
 			Name:        spec.Name.Name,
 			Declaration: fmt.Sprintf("type %s interface", spec.Name.Name),
+			Doc:         doc,
 			Methods:     parseInterfaceMethods(input, typed.Methods),
 		}
 	default:
@@ -134,21 +137,48 @@ func parseTypeSpec(input parsedInput, spec *ast.TypeSpec) declaration {
 			Kind:        "type",
 			Name:        spec.Name.Name,
 			Declaration: strings.TrimSpace(span(input, spec.Pos(), spec.End())),
+			Doc:         doc,
 		}
 	}
 }
 
 func parseValueSpec(input parsedInput, decl *ast.GenDecl, spec *ast.ValueSpec) []declaration {
 	kind := strings.ToLower(decl.Tok.String())
+	doc := declDoc(spec.Doc, decl)
 	declarations := make([]declaration, 0, len(spec.Names))
 	for _, name := range spec.Names {
 		declarations = append(declarations, declaration{
 			Kind:        kind,
 			Name:        name.Name,
 			Declaration: strings.TrimSpace(span(input, decl.Pos(), decl.End())),
+			Doc:         doc,
 		})
 	}
 	return declarations
+}
+
+// docText renders a doc comment group as its raw `//`/`/* */` source lines, joined with newlines.
+func docText(group *ast.CommentGroup) string {
+	if group == nil {
+		return ""
+	}
+	lines := make([]string, 0, len(group.List))
+	for _, comment := range group.List {
+		lines = append(lines, comment.Text)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// declDoc picks the doc for a spec: its own doc if present, else the enclosing GenDecl's doc when
+// the declaration holds a single spec (the `// doc\ntype Foo …` form attaches the doc to the GenDecl).
+func declDoc(specDoc *ast.CommentGroup, decl *ast.GenDecl) string {
+	if specDoc != nil {
+		return docText(specDoc)
+	}
+	if len(decl.Specs) == 1 {
+		return docText(decl.Doc)
+	}
+	return ""
 }
 
 func parseFields(input parsedInput, fields *ast.FieldList) []field {
@@ -225,6 +255,7 @@ func parseFuncDecl(
 		Name:      decl.Name.Name,
 		Signature: signature,
 		Body:      strings.TrimSpace(span(input, decl.Body.Lbrace+1, decl.Body.Rbrace)),
+		Doc:       docText(decl.Doc),
 		Calls:     functionCalls(decl.Body, info, pkg),
 	}
 	if decl.Recv != nil && len(decl.Recv.List) > 0 {

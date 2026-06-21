@@ -35,6 +35,8 @@ pub(crate) struct Declaration {
     pub(crate) body: Option<String>,
     #[serde(default)]
     pub(crate) declaration: Option<String>,
+    #[serde(default)]
+    pub(crate) doc: Option<String>,
     #[serde(default, deserialize_with = "null_to_default")]
     pub(crate) fields: Vec<Field>,
     #[serde(default, deserialize_with = "null_to_default")]
