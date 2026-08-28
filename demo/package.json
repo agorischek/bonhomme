@@ -12,7 +12,7 @@
     "swarm:codex": "node scripts/codex-swarm.mjs"
   },
   "dependencies": {
-    "@primer/octicons-react": "^19.28.1",
+    "@primer/octicons-react": "^19.33.0",
     "@primer/react": "^38.29.0",
     "framer-motion": "^12.40.0",
     "highlight.js": "^11.11.1",
