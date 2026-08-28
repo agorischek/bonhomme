@@ -11,7 +11,8 @@ mod tests;
 
 use anyhow::Result;
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    ValidateFuture, ValidationStrength,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -36,6 +37,13 @@ impl Handler for MarkdownPlugin {
 }
 
 impl LanguagePlugin for MarkdownPlugin {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::semantic(ValidationStrength::Parser).with_limitations(&[
+            "Markdown validation is a permissive parse smoke test",
+            "identical heading paths and repeated inline constructs may require conservative identity",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }

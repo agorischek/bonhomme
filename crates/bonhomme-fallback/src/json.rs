@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context, Result};
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, SymbolNode,
-    ValidateFuture, metadata_string,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    SourceFidelity, SymbolGranularity, SymbolNode, ValidateFuture, ValidationStrength,
+    metadata_string,
 };
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -36,6 +37,19 @@ impl Handler for JsonHandler {
 }
 
 impl LanguagePlugin for JsonHandler {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::structural(
+            SourceFidelity::SemanticCanonical,
+            SymbolGranularity::Member,
+            ValidationStrength::Parser,
+        )
+        .with_limitations(&[
+            "only top-level object keys receive independent merge identities",
+            "rendering normalizes JSON formatting and object-key order",
+            "documents larger than 512 KiB are replaced by a compact placeholder and are not lossless",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         let mut files = file_symbols(graph)
             .map(|file_symbol| RenderedFile {

@@ -198,6 +198,26 @@ fn claims_first_match_wins_and_blob_is_terminal() {
 }
 
 #[test]
+fn manifests_report_each_handler_without_inflating_legacy_capabilities() {
+    let manifests = registry().handler_manifests();
+    assert_eq!(
+        manifests
+            .iter()
+            .map(|manifest| manifest.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["upper", "blob"]
+    );
+    assert_eq!(
+        manifests[0].capabilities.source_fidelity,
+        super::super::SourceFidelity::Undeclared
+    );
+    assert_eq!(
+        manifests[1].capabilities.source_fidelity,
+        super::super::SourceFidelity::ByteExact
+    );
+}
+
+#[test]
 fn untagged_file_symbol_renders_by_claims() {
     let create = Operation::CreateSymbol {
         symbol_id: Uuid::new_v4(),

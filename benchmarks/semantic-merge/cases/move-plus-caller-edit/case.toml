@@ -1,0 +1,6 @@
+name = "Move plus caller edit"
+description = "One side moves a function between modules while the other edits its caller."
+expectedGit = "safe"
+expectedBonhomme = "safe"
+expectedTree = "expected"
+expectedBaseRoundTrip = true

@@ -1,0 +1,5 @@
+name = "Delete versus new reference"
+description = "One side deletes a function while the other adds a call to that function."
+expectedGit = "safe"
+expectedBonhomme = "conflict"
+expectedBaseRoundTrip = true

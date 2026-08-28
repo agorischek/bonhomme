@@ -5,7 +5,11 @@ use anyhow::Result;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{Handler, LanguagePlugin, RenderedFile, Slice, ValidateFuture, read_source_files};
+use super::{
+    CapabilityLevel, Handler, IdentityStability, LanguagePlugin, PluginCapabilities, RenderedFile,
+    Slice, SourceFidelity, SymbolGranularity, ValidateFuture, ValidationStrength,
+    read_source_files,
+};
 use crate::core::{Operation, SemanticGraph, SymbolNode, metadata_string};
 
 /// The universal fallback handler: any bytes round-trip, files survive, and merge happens at file
@@ -28,6 +32,21 @@ impl Handler for BlobHandler {
 }
 
 impl LanguagePlugin for BlobHandler {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities {
+            protocol: crate::ProtocolRange::current(),
+            source_fidelity: SourceFidelity::ByteExact,
+            symbol_granularity: SymbolGranularity::File,
+            identity_stability: IdentityStability::StableWithinPath,
+            reference_extraction: CapabilityLevel::Unsupported,
+            rename_recovery: CapabilityLevel::Unsupported,
+            move_recovery: CapabilityLevel::Unsupported,
+            validation: ValidationStrength::None,
+            incremental_parsing: CapabilityLevel::Unsupported,
+            known_limitations: vec!["conflicts and merges are file-granular".to_string()],
+        }
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         let mut files = blob_file_symbols(graph)
             .map(render_blob_file)

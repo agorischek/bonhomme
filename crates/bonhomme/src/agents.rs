@@ -104,21 +104,21 @@ pub(super) async fn run(
     println!();
     println!("```sh");
     println!(
-        "bonhomme slice create --branch {} --symbol {} > slice.json",
+        "bonhomme slice create --branch {} --symbol {}",
         shell_word(&args.agent),
         shell_word(&symbol)
     );
     println!("```");
     println!();
 
-    println!("3. Edit `slice.json` by changing `files[].content`. Keep the slice `id`.");
+    println!("3. Edit the checked-out source files in the slice directory Bonhomme printed.");
     println!();
 
     println!("4. Apply the edited slice back as semantic operations.");
     println!();
     println!("```sh");
     println!(
-        "bonhomme slice apply --modified slice.json --title \"<short task title>\" --agent {}",
+        "bonhomme slice apply --title \"<short task title>\" --agent {}",
         shell_word(&args.agent)
     );
     println!("```");
@@ -145,7 +145,25 @@ pub(super) async fn run(
     println!("## Conflict Policy");
     println!();
     println!(
-        "If Bonhomme reports `CONFLICT`, stop and report the semantic conflict. Do not guess a text merge."
+        "If Bonhomme reports `CONFLICT`, resolve it through Bonhomme's conflict workspace. Do not guess a text merge."
+    );
+    println!();
+    println!("```sh");
+    println!("bonhomme conflict show <conflict-id>");
+    println!("bonhomme conflict checkout <conflict-id>");
+    println!(
+        "bonhomme conflict resolve <conflict-id> --agent {}",
+        shell_word(&args.agent)
+    );
+    println!("```");
+    println!();
+    println!(
+        "{}",
+        concat!(
+            "Edit only the checked-out `resolved/` projection. Bonhomme will recover semantic ",
+            "operations, validate the rendered source, and keep the conflict open if the ",
+            "resolution is still unsafe."
+        )
     );
     println!();
 

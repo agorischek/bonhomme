@@ -1,0 +1,6 @@
+name = "Independent files"
+description = "Each side edits a different TypeScript module, the conventional clean-merge control."
+expectedGit = "safe"
+expectedBonhomme = "safe"
+expectedTree = "expected"
+expectedBaseRoundTrip = true

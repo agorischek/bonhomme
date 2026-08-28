@@ -1,0 +1,6 @@
+name = "Rename plus independent edit"
+description = "One side renames a function while the other edits nearby file documentation."
+expectedGit = "safe"
+expectedBonhomme = "safe"
+expectedTree = "expected"
+expectedBaseRoundTrip = true

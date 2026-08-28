@@ -6,6 +6,11 @@ members = [
     "crates/bonhomme-rust",
     "crates/bonhomme-python",
     "crates/bonhomme-csharp",
+    "crates/bonhomme-java",
+    "crates/bonhomme-php",
+    "crates/bonhomme-ruby",
+    "crates/bonhomme-kotlin",
+    "crates/bonhomme-swift",
     "crates/bonhomme-elixir",
     "crates/bonhomme-markdown",
     "crates/bonhomme-fallback",
@@ -27,6 +32,11 @@ bonhomme-go = { path = "crates/bonhomme-go" }
 bonhomme-rust = { path = "crates/bonhomme-rust" }
 bonhomme-python = { path = "crates/bonhomme-python" }
 bonhomme-csharp = { path = "crates/bonhomme-csharp" }
+bonhomme-java = { path = "crates/bonhomme-java" }
+bonhomme-php = { path = "crates/bonhomme-php" }
+bonhomme-ruby = { path = "crates/bonhomme-ruby" }
+bonhomme-kotlin = { path = "crates/bonhomme-kotlin" }
+bonhomme-swift = { path = "crates/bonhomme-swift" }
 bonhomme-elixir = { path = "crates/bonhomme-elixir" }
 bonhomme-markdown = { path = "crates/bonhomme-markdown" }
 bonhomme-fallback = { path = "crates/bonhomme-fallback" }
@@ -42,22 +52,29 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 async-trait = "0.1"
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
 turso = "0.6"
 toml = "0.8"
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "process", "fs", "time"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "process", "fs", "io-util", "sync", "time"] }
+tower = { version = "0.5", features = ["limit", "util"] }
+tower-http = { version = "0.6", features = ["catch-panic", "limit", "request-id", "sensitive-headers", "timeout", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.18", features = ["serde", "v4", "v5"] }
 proptest = "1.9"
 pulldown-cmark = { version = "0.12", default-features = false }
 base64 = "0.22"
+fs2 = "0.4"
 ignore = "0.4"
 tree-sitter = "0.25"
 tree-sitter-python = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-c-sharp = "0.23.5"
+tree-sitter-java = "0.23.5"
+tree-sitter-php = "0.24.2"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-kotlin-ng = "1.1.0"
+tree-sitter-swift = "0.7.3"
 tree-sitter-elixir = "0.3.5"
 syn = { version = "2.0", features = ["full", "visit"] }
 quote = "1.0"

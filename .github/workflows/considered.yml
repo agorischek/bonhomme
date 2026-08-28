@@ -4,7 +4,11 @@ on:
     push:
         branches:
             - main
+    pull_request:
     workflow_dispatch:
+
+permissions:
+    contents: read
 
 jobs:
     check:
@@ -12,15 +16,19 @@ jobs:
 
         steps:
             - name: Checkout
-              uses: actions/checkout@v4
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
 
             - name: Install considered
               env:
                   CONSIDERED_VERSION: v0.1.2
+                  CONSIDERED_SHA256: d793053eb8806dfb27864314c0924b5b4444fb9e7b1af39ba942bc23ba2cb363
               run: |
                   url="https://github.com/agorischek/considered/releases/download/${CONSIDERED_VERSION}"
                   archive="considered_${CONSIDERED_VERSION}_linux_amd64.tar.gz"
                   curl -fsSL "$url/$archive" -o "$RUNNER_TEMP/considered.tar.gz"
+                  echo "$CONSIDERED_SHA256  $RUNNER_TEMP/considered.tar.gz" | sha256sum -c -
                   tar -xzf "$RUNNER_TEMP/considered.tar.gz" -C "$RUNNER_TEMP"
                   echo "$RUNNER_TEMP/considered_${CONSIDERED_VERSION}_linux_amd64" >> "$GITHUB_PATH"
 

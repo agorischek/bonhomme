@@ -9,7 +9,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use uuid::Uuid;
 
-use super::{LanguagePlugin, RenderedFile, Slice, ValidateFuture, ValidationContext};
+use super::{
+    LanguagePlugin, PluginCapabilities, RenderedFile, Slice, ValidateFuture, ValidationContext,
+};
 use crate::core::{Operation, ReferenceNode, SemanticGraph, SymbolNode, metadata_string};
 
 pub use source::read_source_files;
@@ -31,6 +33,20 @@ pub trait Handler: LanguagePlugin {
     /// The registry resolves a file to the first claimant in registry order; the terminal handler
     /// claims everything.
     fn claims(&self, file: &RenderedFile) -> bool;
+
+    fn manifest(&self) -> HandlerManifest {
+        HandlerManifest {
+            name: self.name().to_string(),
+            capabilities: self.capabilities(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HandlerManifest {
+    pub name: String,
+    pub capabilities: PluginCapabilities,
 }
 
 /// The per-file router. An ordered set of [`Handler`]s that *is itself* a [`LanguagePlugin`], so the
@@ -84,6 +100,15 @@ impl HandlerRegistry {
     /// The handler names in priority order — used for transparency reporting.
     pub fn handler_names(&self) -> Vec<&str> {
         self.handlers.iter().map(|handler| handler.name()).collect()
+    }
+
+    /// Stable, serializable capability reports in routing priority order. A caller can persist this
+    /// alongside a merge decision to record exactly which semantic coverage was available.
+    pub fn handler_manifests(&self) -> Vec<HandlerManifest> {
+        self.handlers
+            .iter()
+            .map(|handler| handler.manifest())
+            .collect()
     }
 
     /// The first handler that claims `file`, falling back to the terminal (last) handler so this
@@ -499,5 +524,6 @@ fn subgraph_for_files(graph: &SemanticGraph, file_ids: &BTreeSet<Uuid>) -> Seman
         symbols,
         references,
         applied_operations: graph.applied_operations.clone(),
+        symbol_names: BTreeSet::new(),
     }
 }

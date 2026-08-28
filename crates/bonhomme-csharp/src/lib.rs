@@ -11,7 +11,8 @@ mod tests;
 
 use anyhow::Result;
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    ValidateFuture, ValidationStrength,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -46,6 +47,13 @@ impl Handler for CSharpPlugin {
 }
 
 impl LanguagePlugin for CSharpPlugin {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::semantic(ValidationStrength::Compiler).with_limitations(&[
+            "overloads, partial types, and project-aware semantics are not fully modeled",
+            "references are syntax-derived rather than Roslyn-resolved",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }

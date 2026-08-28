@@ -58,7 +58,7 @@ async fn seed_initial_order_service(
     let default_region_id = stable_uuid("symbol/OrderService/defaultRegion");
     let list_orders_id = list_orders_method_id();
 
-    let operations = vec![
+    let mut operations = vec![
         Operation::CreateSymbol {
             symbol_id: file_id,
             parent_id: None,
@@ -73,7 +73,7 @@ async fn seed_initial_order_service(
             kind: "class".to_string(),
             name: "OrderService".to_string(),
             body: None,
-            metadata: json!({"exported": true}),
+            metadata: json!({"declaration": "export class OrderService", "exported": true}),
         },
         Operation::CreateSymbol {
             symbol_id: service_name_id,
@@ -112,6 +112,15 @@ async fn seed_initial_order_service(
         },
     ];
 
+    for method in baseline_methods() {
+        operations.extend(method_operations(
+            method,
+            class_id,
+            display_name_id,
+            list_orders_id,
+        ));
+    }
+
     for operation in operations {
         storage
             .append_operation(repository.id, main.id, changeset.id, operation)
@@ -119,4 +128,126 @@ async fn seed_initial_order_service(
     }
 
     Ok(())
+}
+
+struct BaselineMethod {
+    name: &'static str,
+    body: &'static str,
+}
+
+fn baseline_methods() -> &'static [BaselineMethod] {
+    &[
+        BaselineMethod {
+            name: "summarizeCart",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} cart stages: ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "quoteFulfillmentWindow",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} fulfillment window for ${this.defaultRegion}: ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "reserveInventory",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} reserves inventory before ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "releaseInventoryHold",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} releases stale holds after ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "scorePaymentRisk",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} payment risk score uses ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "authorizePayment",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} authorizes payment after ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "chooseCarrier",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} carrier choice follows ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "schedulePickup",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} pickup schedule follows ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "calculateTaxRegion",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} tax region ${this.defaultRegion} covers ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "issueRefundPreview",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} refund preview waits for ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "loyaltyTierMessage",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} loyalty tier message includes ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "customerHoldReason",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} customer hold reason checks ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "auditTrailLabel",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} audit trail label records ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "warehouseBatchKey",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} warehouse batch key groups ${stages}`;"#,
+        },
+        BaselineMethod {
+            name: "supportEscalationPath",
+            body: r#"const stages = this.listOrders().join(" -> ");
+return `${this.displayName()} support escalation path reviews ${stages}`;"#,
+        },
+    ]
+}
+
+fn method_operations(
+    method: &BaselineMethod,
+    class_id: uuid::Uuid,
+    display_name_id: uuid::Uuid,
+    list_orders_id: uuid::Uuid,
+) -> Vec<Operation> {
+    let method_id = stable_uuid(&format!("symbol/OrderService/{}", method.name));
+    vec![
+        Operation::CreateSymbol {
+            symbol_id: method_id,
+            parent_id: Some(class_id),
+            kind: "method".to_string(),
+            name: method.name.to_string(),
+            body: Some(method.body.to_string()),
+            metadata: json!({"signature": format!("{}(): string", method.name)}),
+        },
+        Operation::CreateReference {
+            reference_id: stable_uuid(&format!(
+                "reference/OrderService/{}/displayName",
+                method.name
+            )),
+            from_symbol_id: method_id,
+            to_symbol_id: display_name_id,
+            kind: "calls".to_string(),
+        },
+        Operation::CreateReference {
+            reference_id: stable_uuid(&format!(
+                "reference/OrderService/{}/listOrders",
+                method.name
+            )),
+            from_symbol_id: method_id,
+            to_symbol_id: list_orders_id,
+            kind: "calls".to_string(),
+        },
+    ]
 }

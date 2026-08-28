@@ -1,0 +1,6 @@
+name = "Independent same-file additions"
+description = "Each side adds a different function at the same insertion point in one TypeScript file."
+expectedGit = "conflict"
+expectedBonhomme = "safe"
+expectedTree = "expected"
+expectedBaseRoundTrip = true

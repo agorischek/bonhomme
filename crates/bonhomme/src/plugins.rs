@@ -8,9 +8,14 @@ use bonhomme_csharp::CSharpPlugin;
 use bonhomme_elixir::ElixirPlugin;
 use bonhomme_fallback::{JsonHandler, TomlHandler, TreeSitterHandler, YamlHandler};
 use bonhomme_go::GoPlugin;
+use bonhomme_java::JavaPlugin;
+use bonhomme_kotlin::KotlinPlugin;
 use bonhomme_markdown::MarkdownPlugin;
+use bonhomme_php::PhpPlugin;
 use bonhomme_python::PythonPlugin;
+use bonhomme_ruby::RubyPlugin;
 use bonhomme_rust::RustPlugin;
+use bonhomme_swift::SwiftPlugin;
 use bonhomme_ts::TypeScriptPlugin;
 
 use crate::config::Config;
@@ -39,6 +44,11 @@ fn handler_registry(config: &Config, root: &Path) -> HandlerRegistry {
             config, root,
         ))),
         Arc::new(CSharpPlugin::with_dotnet(dotnet_binary(config, root))),
+        Arc::new(JavaPlugin::with_javac(javac_binary(config, root))),
+        Arc::new(PhpPlugin::with_php(php_binary(config, root))),
+        Arc::new(RubyPlugin::with_ruby(ruby_binary(config, root))),
+        Arc::new(KotlinPlugin::with_kotlinc(kotlinc_binary(config, root))),
+        Arc::new(SwiftPlugin::with_swiftc(swiftc_binary(config, root))),
         Arc::new(ElixirPlugin::with_compiler(elixir_compiler(config, root))),
         Arc::new(JsonHandler),
         Arc::new(MarkdownPlugin),
@@ -61,6 +71,26 @@ fn python_interpreter(config: &Config, root: &Path) -> Option<String> {
 
 fn dotnet_binary(config: &Config, root: &Path) -> Option<String> {
     configured_toolchain(config, root, &["dotnet"])
+}
+
+fn javac_binary(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["java", "javac"])
+}
+
+fn php_binary(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["php"])
+}
+
+fn ruby_binary(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["ruby"])
+}
+
+fn kotlinc_binary(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["kotlin", "kotlinc"])
+}
+
+fn swiftc_binary(config: &Config, root: &Path) -> Option<String> {
+    configured_toolchain(config, root, &["swift", "swiftc"])
 }
 
 fn elixir_compiler(config: &Config, root: &Path) -> Option<String> {
@@ -93,11 +123,72 @@ fn is_path_like(command: &str) -> bool {
 mod tests {
     use super::*;
     use bonhomme_core::{
-        LanguagePlugin, Operation, OperationRecord, RenderedFile, SemanticGraph, decode_binary,
-        encode_binary, materialize,
+        LanguagePlugin, Operation, OperationRecord, RenderedFile, SemanticGraph,
+        canonical_json_bytes, decode_binary, encode_binary, materialize,
     };
+    use sha2::{Digest, Sha256};
     use std::collections::BTreeMap;
     use uuid::Uuid;
+
+    #[test]
+    fn production_registry_capability_snapshot_is_complete() {
+        let manifests =
+            handler_registry(&Config::default(), Path::new("/repo")).handler_manifests();
+        let names = manifests
+            .iter()
+            .map(|manifest| manifest.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "typescript",
+                "go",
+                "rust",
+                "python",
+                "csharp",
+                "java",
+                "php",
+                "ruby",
+                "kotlin",
+                "swift",
+                "elixir",
+                "json",
+                "markdown",
+                "toml",
+                "yaml",
+                "treesitter",
+                "blob",
+            ]
+        );
+        assert!(manifests.iter().all(|manifest| {
+            manifest
+                .capabilities
+                .protocol
+                .contains(bonhomme_core::CURRENT_PROTOCOL_VERSION)
+                && manifest.capabilities.source_fidelity
+                    != bonhomme_core::SourceFidelity::Undeclared
+                && manifest.capabilities.symbol_granularity
+                    != bonhomme_core::SymbolGranularity::Undeclared
+                && manifest.capabilities.identity_stability
+                    != bonhomme_core::IdentityStability::Undeclared
+                && manifest.capabilities.reference_extraction
+                    != bonhomme_core::CapabilityLevel::Undeclared
+                && manifest.capabilities.rename_recovery
+                    != bonhomme_core::CapabilityLevel::Undeclared
+                && manifest.capabilities.move_recovery != bonhomme_core::CapabilityLevel::Undeclared
+                && manifest.capabilities.validation != bonhomme_core::ValidationStrength::Undeclared
+                && manifest.capabilities.incremental_parsing
+                    != bonhomme_core::CapabilityLevel::Undeclared
+        }));
+        // The digest is a compact golden snapshot over canonical JSON. The explicit name and
+        // non-undeclared assertions above keep failures diagnosable while any field/value change in
+        // the complete production manifest requires intentional snapshot review.
+        let digest = Sha256::digest(canonical_json_bytes(&manifests).unwrap());
+        assert_eq!(
+            format!("{digest:x}"),
+            "7db07a0589a801bb36e0bdb935f00c78634b3a1b8d7e490750d999b62c72cf4c"
+        );
+    }
 
     fn rf(path: &str, content: &str) -> RenderedFile {
         RenderedFile {
@@ -144,6 +235,30 @@ mod tests {
                 "class Service {\n    int Answer() {\n        return 42;\n    }\n}\n",
             ),
             rf(
+                "src/OrderService.java",
+                "package demo;\n\nclass OrderService {\n    int answer() {\n        return 42;\n    }\n}\n",
+            ),
+            rf(
+                "src/OrderService.php",
+                concat!(
+                    "<?php\n\nnamespace Demo;\n\nfinal class OrderService\n{\n",
+                    "    public function answer(): int\n    {\n",
+                    "        return 42;\n    }\n}\n"
+                ),
+            ),
+            rf(
+                "lib/order_service.rb",
+                "module Demo\n  class OrderService\n    def answer\n      42\n    end\n  end\nend\n",
+            ),
+            rf(
+                "src/OrderService.kt",
+                "package demo\n\nclass OrderService {\n    fun answer(): Int {\n        return 42\n    }\n}\n",
+            ),
+            rf(
+                "Sources/OrderService.swift",
+                "final class OrderService {\n    func answer() -> Int {\n        return 42\n    }\n}\n",
+            ),
+            rf(
                 "lib/service.ex",
                 "defmodule Demo.Service do\n  def answer do\n    42\n  end\nend\n",
             ),
@@ -164,6 +279,11 @@ mod tests {
         assert_eq!(breakdown.get("rust"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("python"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("csharp"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("java"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("php"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("ruby"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("kotlin"), Some(&1), "{breakdown:?}");
+        assert_eq!(breakdown.get("swift"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("elixir"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("json"), Some(&1), "{breakdown:?}");
         assert_eq!(breakdown.get("markdown"), Some(&1), "{breakdown:?}");
@@ -181,6 +301,11 @@ mod tests {
         assert_eq!(by_path["Cargo.toml"], "[package]\nname = \"demo\"\n");
         assert_eq!(by_path["util.py"], "def greet():\n    return 1\n");
         assert!(by_path["src/Service.cs"].contains("class Service"));
+        assert!(by_path["src/OrderService.java"].contains("class OrderService"));
+        assert!(by_path["src/OrderService.php"].contains("class OrderService"));
+        assert!(by_path["lib/order_service.rb"].contains("class OrderService"));
+        assert!(by_path["src/OrderService.kt"].contains("class OrderService"));
+        assert!(by_path["Sources/OrderService.swift"].contains("class OrderService"));
         assert!(by_path["lib/service.ex"].contains("defmodule Demo.Service"));
         assert_eq!(by_path["LICENSE"], "MIT, verbatim.\n");
         assert_eq!(
@@ -223,6 +348,31 @@ mod tests {
                 "cs-doc-marker",
             ),
             (
+                "Svc.java",
+                "class Svc {\n    /** java-doc-marker */\n    int m() {\n        return 1;\n    }\n}\n",
+                "java-doc-marker",
+            ),
+            (
+                "Svc.php",
+                "<?php\n\nclass Svc\n{\n    /** php-doc-marker */\n    public function m(): int\n    {\n        return 1;\n    }\n}\n",
+                "php-doc-marker",
+            ),
+            (
+                "svc.rb",
+                "class Svc\n  # ruby-doc-marker\n  def m\n    1\n  end\nend\n",
+                "ruby-doc-marker",
+            ),
+            (
+                "Svc.kt",
+                "class Svc {\n    /** kt-doc-marker */\n    fun m(): Int {\n        return 1\n    }\n}\n",
+                "kt-doc-marker",
+            ),
+            (
+                "Svc.swift",
+                "class Svc {\n    /// swift-doc-marker\n    func m() -> Int {\n        return 1\n    }\n}\n",
+                "swift-doc-marker",
+            ),
+            (
                 "svc.ex",
                 "defmodule Svc do\n  @moduledoc \"ex-doc-marker\"\nend\n",
                 "ex-doc-marker",
@@ -238,7 +388,19 @@ mod tests {
         // Guard: each fixture must parse *structurally*, not degrade to blob — otherwise docs would
         // survive verbatim and the gate would pass without testing the plugin's doc handling.
         let breakdown = registry.handler_breakdown(&graph);
-        for handler in ["typescript", "go", "rust", "python", "csharp", "elixir"] {
+        for handler in [
+            "typescript",
+            "go",
+            "rust",
+            "python",
+            "csharp",
+            "java",
+            "php",
+            "ruby",
+            "kotlin",
+            "swift",
+            "elixir",
+        ] {
             assert_eq!(
                 breakdown.get(handler),
                 Some(&1),
@@ -345,6 +507,99 @@ mod tests {
         assert_eq!(
             dotnet_binary(&config, Path::new("/repo")).as_deref(),
             Some("/opt/dotnet")
+        );
+    }
+
+    #[test]
+    fn java_toolchain_comes_from_config() {
+        let config = config_with_toolchain("java", "/opt/javac");
+
+        assert_eq!(
+            javac_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/javac")
+        );
+    }
+
+    #[test]
+    fn javac_toolchain_key_is_an_alias_for_java() {
+        let config = config_with_toolchain("javac", "/opt/jdk/bin/javac");
+
+        assert_eq!(
+            javac_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/jdk/bin/javac")
+        );
+    }
+
+    #[test]
+    fn java_toolchain_key_takes_precedence_over_javac_alias() {
+        let mut config = config_with_toolchain("javac", "/opt/jdk/bin/javac");
+        config
+            .toolchain
+            .insert("java".to_string(), "/opt/java".to_string());
+
+        assert_eq!(
+            javac_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/java")
+        );
+    }
+
+    #[test]
+    fn php_toolchain_comes_from_config() {
+        let config = config_with_toolchain("php", "/opt/php");
+
+        assert_eq!(
+            php_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/php")
+        );
+    }
+
+    #[test]
+    fn ruby_toolchain_comes_from_config() {
+        let config = config_with_toolchain("ruby", "/opt/ruby");
+
+        assert_eq!(
+            ruby_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/ruby")
+        );
+    }
+
+    #[test]
+    fn kotlin_toolchain_comes_from_config() {
+        let config = config_with_toolchain("kotlin", "/opt/kotlinc");
+
+        assert_eq!(
+            kotlinc_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/kotlinc")
+        );
+    }
+
+    #[test]
+    fn kotlinc_toolchain_key_is_an_alias_for_kotlin() {
+        let config = config_with_toolchain("kotlinc", "/opt/kotlinc");
+
+        assert_eq!(
+            kotlinc_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/kotlinc")
+        );
+    }
+
+    #[test]
+    fn swift_toolchain_comes_from_config() {
+        let config = config_with_toolchain("swift", "/opt/swiftc");
+
+        assert_eq!(
+            swiftc_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/swiftc")
+        );
+    }
+
+    #[test]
+    fn swiftc_toolchain_key_is_an_alias_for_swift() {
+        let config = config_with_toolchain("swiftc", "/opt/swiftc");
+
+        assert_eq!(
+            swiftc_binary(&config, Path::new("/repo")).as_deref(),
+            Some("/opt/swiftc")
         );
     }
 

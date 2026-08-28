@@ -11,7 +11,8 @@ mod tests;
 
 use anyhow::Result;
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    ValidateFuture, ValidationStrength,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -36,6 +37,13 @@ impl Handler for RustPlugin {
 }
 
 impl LanguagePlugin for RustPlugin {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::semantic(ValidationStrength::Compiler).with_limitations(&[
+            "macros and cross-crate/module resolution are outside current semantic coverage",
+            "validation is cargo-based but not workspace-aware through the registry",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }

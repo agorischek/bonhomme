@@ -1,4 +1,7 @@
-use crate::{MergeResult, Storage};
+use crate::{
+    ConflictPositions, MergeResult, Storage,
+    backend::{PendingOperation, PendingOperationCommit},
+};
 use anyhow::{Result, bail};
 use bonhomme_core::{
     MergeAnalysis, MergeConflict, MergeOutcome, Operation, OperationRecord, analyze_merge,
@@ -97,10 +100,21 @@ impl Storage {
         }
 
         if analysis.outcome == MergeOutcome::Conflict {
+            let conflict = self
+                .create_merge_conflict(
+                    &source,
+                    &target,
+                    ConflictPositions::new(source.base_position, target_operations.len() as i64),
+                    analysis.conflicts.clone(),
+                    &source_operations,
+                    "merge-engine",
+                )
+                .await?;
             let graph = materialize(&target_operations)?;
             return Ok(MergeResult {
                 outcome: MergeOutcome::Conflict,
                 conflicts: analysis.conflicts,
+                conflict_id: Some(conflict.id),
                 source_branch: source,
                 target_branch: target,
                 appended_operations: Vec::new(),
@@ -109,40 +123,34 @@ impl Storage {
             });
         }
 
-        let task = self
-            .create_task(
-                repository.id,
-                &format!("Merge {source_branch_name} into {target_branch_name}"),
-            )
-            .await?;
-        let changeset = self
-            .create_changeset(
-                repository.id,
-                task.id,
-                target.id,
-                &format!("Merge {source_branch_name}"),
-                "merge-engine",
-            )
-            .await?;
-
-        let appended = self
-            .append_operations_if_branch_position(
-                repository.id,
-                target.id,
-                changeset.id,
-                expected_target_own_position,
-                source_operations
+        let committed = self
+            .backend
+            .commit_operations(PendingOperationCommit {
+                repository_id: repository.id,
+                branch_id: target.id,
+                expected_current_position: expected_target_own_position,
+                task_title: format!("Merge {source_branch_name} into {target_branch_name}"),
+                changeset_title: format!("Merge {source_branch_name}"),
+                created_by: "merge-engine".to_string(),
+                operations: source_operations
                     .iter()
-                    .map(|operation| operation.operation.clone())
-                    .collect(),
-            )
+                    .map(|record| {
+                        Ok(PendingOperation {
+                            op_type: record.operation.op_type().to_string(),
+                            payload: serde_json::to_value(&record.operation)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+            })
             .await?;
+        let appended = committed.operations;
 
         let updated_operations = self.collect_branch_operations(target.id, None).await?;
         let graph = materialize(&updated_operations)?;
         Ok(MergeResult {
             outcome: MergeOutcome::SafeMerge,
             conflicts: Vec::new(),
+            conflict_id: None,
             source_branch: source,
             target_branch: target,
             appended_operations: appended,

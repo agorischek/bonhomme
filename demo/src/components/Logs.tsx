@@ -6,7 +6,7 @@ function shortId(id?: string) {
   return id ? id.slice(0, 8) : 'unknown'
 }
 
-function OperationLog({ operations }: { operations: OperationView[] }) {
+export function OperationLog({ operations }: { operations: OperationView[] }) {
   return (
     <div className="operation-log">
       {operations.map((operation) => (
@@ -40,7 +40,7 @@ function SimulationRow({ result }: { result: SimulationResult }) {
   )
 }
 
-function MergeReview({
+export function MergeReview({
   simulationResult,
   mergeResults,
 }: {
@@ -51,7 +51,7 @@ function MergeReview({
     <div className="merge-log">
       {simulationResult && <SimulationRow result={simulationResult} />}
       {mergeResults.length === 0 && !simulationResult && (
-        <p className="muted">Run a merge wave to watch safe merges and conflicts.</p>
+        <p className="muted">Manual queue merge reviews appear here; autonomous landings update the operation log.</p>
       )}
       {mergeResults.map((result) => (
         <div

@@ -1,0 +1,6 @@
+name = "Formatting churn plus semantic edit"
+description = "One side reformats a function while the other changes its behavior."
+expectedGit = "conflict"
+expectedBonhomme = "safe"
+expectedTree = "expected"
+expectedBaseRoundTrip = true

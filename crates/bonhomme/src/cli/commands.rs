@@ -5,7 +5,10 @@ use bonhomme_core::{
     Branch, MergeOutcome, Operation, OperationRecord, RenderedFile, Repository, SemanticGraph,
     metadata_string, safe_relative_path,
 };
-use bonhomme_engine::{MaterializedBranch, PendingSourceFileSnapshot, SourceFileSnapshot, Storage};
+use bonhomme_engine::{
+    ConflictRecord, MaterializedBranch, PendingSourceFileSnapshot, ResolveConflictResult,
+    SourceFileSnapshot, Storage,
+};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
@@ -15,19 +18,24 @@ use std::{
 use tokio::fs;
 use uuid::Uuid;
 
+use super::conflict_workspace::{
+    checkout_conflict, display_directory as display_conflict_directory, read_checked_out_conflict,
+};
 use super::files::{read_rendered_files, read_slice_id};
 use super::queries::{
     print_related_symbols, resolve_symbol, select_callees, select_callers, select_dependencies,
     select_dependents,
 };
 use super::slice_audit::{SliceAuditContext, slice_recovery_audit};
+use super::slice_workspace::{checkout_slice, display_directory, read_checked_out_slice};
 use super::{
-    BranchCommand, Command, DemoCommand, ImportArgs, QueryCommand, SliceCommand, TaskCommand,
+    BranchCommand, Command, ConflictCommand, DemoCommand, GitCommand, ImportArgs, QueryCommand,
+    SliceCommand, TaskCommand,
 };
 
 const IMPORTER_VERSION: &str = "source-snapshot-v1";
 
-async fn resolve_repository_name(root: &Path, explicit: Option<&str>) -> Result<String> {
+pub(super) async fn resolve_repository_name(root: &Path, explicit: Option<&str>) -> Result<String> {
     if let Some(repo) = explicit {
         return Ok(repo.to_string());
     }
@@ -68,7 +76,11 @@ struct IncrementalPlan {
     deleted: Vec<SourceFileSnapshot>,
 }
 
-async fn run_import_command(storage: Storage, args: ImportArgs, root: &Path) -> Result<()> {
+pub(super) async fn run_import_command(
+    storage: Storage,
+    args: ImportArgs,
+    root: &Path,
+) -> Result<()> {
     let repository_name = resolve_repository_name(root, args.repo.as_deref()).await?;
     let (repository, branch) = import_target(&storage, &args, &repository_name).await?;
     let files = storage.plugin().read_source_tree(&args.path)?;
@@ -441,7 +453,7 @@ fn content_hash(content: &str) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn delete_file_operations<'a>(
+pub(super) fn delete_file_operations<'a>(
     graph: &SemanticGraph,
     paths: impl IntoIterator<Item = &'a str>,
 ) -> Vec<Operation> {
@@ -490,7 +502,7 @@ fn collect_delete_symbols(
     symbol_deletes.push(symbol_id);
 }
 
-fn merge_delete_and_recovered_operations(
+pub(super) fn merge_delete_and_recovered_operations(
     delete_operations: Vec<Operation>,
     recovered_operations: Vec<Operation>,
 ) -> Vec<Operation> {
@@ -533,6 +545,7 @@ pub(super) async fn run_storage_command(
         Command::Server(_) => unreachable!("handled before storage command dispatch"),
         Command::Explore(_) => unreachable!("handled before storage command dispatch"),
         Command::Session { .. } => unreachable!("handled before storage command dispatch"),
+        Command::Production { .. } => unreachable!("handled before storage command dispatch"),
         Command::Init(args) => {
             let name = resolve_repository_name(root, args.name.as_deref()).await?;
             let (repository, branch) = storage.init_repository(&name).await?;
@@ -544,6 +557,13 @@ pub(super) async fn run_storage_command(
             );
         }
         Command::Import(args) => run_import_command(storage, args, root).await?,
+        Command::Git { command } => match command {
+            GitCommand::Import(args) => super::git_bridge::run_import(storage, args, root).await?,
+            GitCommand::Export(args) => super::git_bridge::run_export(&storage, args, root).await?,
+            GitCommand::Shadow(_) | GitCommand::Benchmark(_) => {
+                unreachable!("handled before storage command dispatch")
+            }
+        },
         Command::Branch { command } => match command {
             BranchCommand::Create(args) => {
                 let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
@@ -591,14 +611,58 @@ pub(super) async fn run_storage_command(
                     root_symbols,
                 );
                 slice.id = stored_slice.id;
-                println!("{}", serde_json::to_string_pretty(&slice)?);
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&slice)?);
+                } else {
+                    let directory = checkout_slice(
+                        root,
+                        &repo,
+                        &materialized.branch.name,
+                        &slice,
+                        args.out.as_deref(),
+                    )
+                    .await?;
+                    print_slice_checkout(root, &directory, &slice);
+                }
             }
             SliceCommand::Apply(args) => {
-                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                let (repo, modified, slice_id, workspace_directory) =
+                    if let Some(modified_path) = args.modified.as_ref() {
+                        let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                        let modified_slice_id = read_slice_id(modified_path).await?;
+                        let modified = read_rendered_files(modified_path).await?;
+                        (repo, modified, args.slice_id.or(modified_slice_id), None)
+                    } else {
+                        if args.original.is_some() {
+                            bail!("slice apply --original requires legacy --modified input");
+                        }
+                        let checked_out = read_checked_out_slice(root, args.dir.as_deref()).await?;
+                        if let Some(explicit_repo) = args.repo.as_deref()
+                            && explicit_repo != checked_out.manifest.repository
+                        {
+                            bail!(
+                                "checked-out slice belongs to repository {}, not {}",
+                                checked_out.manifest.repository,
+                                explicit_repo
+                            );
+                        }
+                        if let Some(explicit_slice_id) = args.slice_id
+                            && explicit_slice_id != checked_out.manifest.id
+                        {
+                            bail!(
+                                "checked-out slice id {} does not match --slice-id {}",
+                                checked_out.manifest.id,
+                                explicit_slice_id
+                            );
+                        }
+                        (
+                            checked_out.manifest.repository.clone(),
+                            checked_out.files,
+                            Some(checked_out.manifest.id),
+                            Some(checked_out.directory),
+                        )
+                    };
                 let repository = storage.repository_by_name(&repo).await?;
-                let modified_slice_id = read_slice_id(&args.modified).await?;
-                let modified = read_rendered_files(&args.modified).await?;
-                let slice_id = args.slice_id.or(modified_slice_id);
                 let (branch, operations, audit_context) = if let Some(slice_id) = slice_id {
                     let stored_slice = storage.slice_by_id(slice_id).await?;
                     if stored_slice.repository_id != repository.id {
@@ -629,11 +693,28 @@ pub(super) async fn run_storage_command(
                         )
                         .await?;
                     if analysis.outcome == MergeOutcome::Conflict {
-                        bail!(
-                            "slice {slice_id} conflicts with branch {}: {}",
-                            branch.name,
-                            serde_json::to_string_pretty(&analysis.conflicts)?
+                        let conflict = storage
+                            .create_slice_apply_conflict(
+                                slice_id,
+                                &branch,
+                                bonhomme_engine::ConflictPositions::new(
+                                    stored_slice.base_position,
+                                    branch_position_at_apply,
+                                ),
+                                analysis.conflicts,
+                                operations,
+                                &args.agent,
+                            )
+                            .await?;
+                        let views = storage.conflict_views(conflict.id).await?;
+                        let directory = checkout_conflict(root, &views, None).await?;
+                        eprintln!(
+                            "CONFLICT {} checked out to {}",
+                            conflict.id,
+                            display_conflict_directory(root, &directory)
                         );
+                        println!("{}", serde_json::to_string_pretty(&conflict)?);
+                        return Ok(());
                     }
                     let audit_context = SliceAuditContext {
                         slice_id,
@@ -691,6 +772,12 @@ pub(super) async fn run_storage_command(
                         )
                         .await?;
                 }
+                if let Some(directory) = workspace_directory {
+                    eprintln!(
+                        "bonhomme: applied checked-out slice from {}",
+                        display_directory(root, &directory)
+                    );
+                }
                 println!("{}", serde_json::to_string_pretty(&appended)?);
             }
         },
@@ -699,8 +786,75 @@ pub(super) async fn run_storage_command(
             let result = storage
                 .merge_branch(&repo, &args.source, &args.target)
                 .await?;
+            if let Some(conflict_id) = result.conflict_id {
+                let views = storage.conflict_views(conflict_id).await?;
+                let directory = checkout_conflict(root, &views, None).await?;
+                eprintln!(
+                    "CONFLICT {} checked out to {}",
+                    conflict_id,
+                    display_conflict_directory(root, &directory)
+                );
+            }
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
+        Command::Conflict { command } => match command {
+            ConflictCommand::List(args) => {
+                let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
+                let conflicts = storage.list_conflicts_by_repository_name(&repo).await?;
+                println!("{}", serde_json::to_string_pretty(&conflicts)?);
+            }
+            ConflictCommand::Show(args) => {
+                let conflict = storage.conflict_by_id(args.conflict_id).await?;
+                if args.json {
+                    println!("{}", serde_json::to_string_pretty(&conflict)?);
+                } else {
+                    print_conflict_summary(&conflict);
+                }
+            }
+            ConflictCommand::Checkout(args) => {
+                let directory = checkout_conflict_command(
+                    &storage,
+                    root,
+                    args.conflict_id,
+                    args.out.as_deref(),
+                )
+                .await?;
+                println!(
+                    "checked out conflict {} to {}",
+                    args.conflict_id,
+                    display_conflict_directory(root, &directory)
+                );
+            }
+            ConflictCommand::Resolve(args) => {
+                let checked_out = read_checked_out_conflict(root, args.dir.as_deref()).await?;
+                if checked_out.manifest.id != args.conflict_id {
+                    bail!(
+                        "checked-out conflict id {} does not match {}",
+                        checked_out.manifest.id,
+                        args.conflict_id
+                    );
+                }
+                let result = storage
+                    .resolve_conflict(
+                        args.conflict_id,
+                        checked_out.resolved_files,
+                        &args.agent,
+                        args.accept_drop,
+                    )
+                    .await?;
+                if let ResolveConflictResult::StillConflicting { diagnostic, .. } = &result {
+                    eprintln!("STILL_CONFLICTING: {diagnostic}");
+                }
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            }
+            ConflictCommand::Abandon(args) => {
+                let conflict = storage.abandon_conflict(args.conflict_id).await?;
+                if let Some(reason) = args.reason {
+                    eprintln!("abandoned conflict {}: {}", args.conflict_id, reason);
+                }
+                println!("{}", serde_json::to_string_pretty(&conflict)?);
+            }
+        },
         Command::Validate(args) => {
             let repo = resolve_repository_name(root, args.repo.as_deref()).await?;
             let materialized = storage.materialize_branch(&repo, &args.branch).await?;
@@ -840,11 +994,67 @@ fn compact_error(error: &anyhow::Error) -> String {
     compact
 }
 
+async fn checkout_conflict_command(
+    storage: &Storage,
+    root: &Path,
+    conflict_id: Uuid,
+    out: Option<&Path>,
+) -> Result<std::path::PathBuf> {
+    let conflict = storage.conflict_by_id(conflict_id).await?;
+    let views = storage.conflict_views(conflict_id).await?;
+    let directory = checkout_conflict(root, &views, out).await?;
+    if conflict.state.is_active() {
+        storage.mark_conflict_resolving(conflict_id).await?;
+    }
+    Ok(directory)
+}
+
+fn print_conflict_summary(conflict: &ConflictRecord) {
+    println!("conflict {}", conflict.id);
+    println!("  kind: {}", conflict.kind);
+    println!("  state: {}", conflict.state);
+    println!("  source: {}", conflict.source_branch_name);
+    println!("  target: {}", conflict.target_branch_name);
+    println!("  base position: {}", conflict.base_position);
+    println!("  target position: {}", conflict.target_position);
+    println!(
+        "  proposed operations: {}",
+        conflict.proposed_operations.len()
+    );
+    println!("  conflicts:");
+    if conflict.conflicts.is_empty() {
+        println!("    none");
+    } else {
+        for item in &conflict.conflicts {
+            println!("    {}: {}", item.reason, item.detail);
+        }
+    }
+}
+
+fn print_slice_checkout(root: &Path, directory: &Path, slice: &bonhomme_core::Slice) {
+    println!(
+        "checked out slice {} to {}",
+        slice.id,
+        display_directory(root, directory)
+    );
+    println!();
+    println!("Edit the checked-out files, then apply with:");
+    println!();
+    println!("  bonhomme slice apply --title \"<short task title>\" --agent <agent>");
+    println!();
+    println!("Files:");
+    for file in &slice.files {
+        println!("  {}", file.path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bonhomme_engine::{ConflictPositions, ConflictState};
     use chrono::Utc;
     use serde_json::json;
+    use std::sync::Arc;
 
     fn rendered(path: &str, content: &str) -> RenderedFile {
         RenderedFile {
@@ -866,6 +1076,57 @@ mod tests {
             importer_version: importer_version.to_string(),
             updated_at: Utc::now(),
         }
+    }
+
+    #[tokio::test]
+    async fn failed_conflict_checkout_does_not_advance_persisted_state() {
+        let root = std::env::temp_dir().join(format!(
+            "bonhomme-conflict-checkout-failure-{}-{}",
+            std::process::id(),
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).await.unwrap();
+        let blocked = root.join("already-populated");
+        fs::create_dir_all(&blocked).await.unwrap();
+        fs::write(blocked.join("keep.txt"), "do not overwrite")
+            .await
+            .unwrap();
+
+        let storage = Storage::connect(
+            ":memory:",
+            Arc::new(bonhomme_ts::TypeScriptPlugin::default()),
+        )
+        .await
+        .unwrap();
+        storage.migrate().await.unwrap();
+        let (repository, main) = storage.init_repository("checkout-failure").await.unwrap();
+        let slice = storage
+            .create_slice(repository.id, main.id, 0, &[])
+            .await
+            .unwrap();
+        let conflict = storage
+            .create_slice_apply_conflict(
+                slice.id,
+                &main,
+                ConflictPositions::new(0, 0),
+                Vec::new(),
+                Vec::new(),
+                "test",
+            )
+            .await
+            .unwrap();
+        assert_eq!(conflict.state, ConflictState::Open);
+
+        let checkout =
+            checkout_conflict_command(&storage, &root, conflict.id, Some(&blocked)).await;
+        assert!(checkout.is_err());
+        assert_eq!(
+            storage.conflict_by_id(conflict.id).await.unwrap().state,
+            ConflictState::Open,
+            "failed filesystem checkout must not persist a resolving transition"
+        );
+
+        let _ = fs::remove_dir_all(&root).await;
     }
 
     #[test]

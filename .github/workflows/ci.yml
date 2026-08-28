@@ -1,0 +1,201 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    env:
+      BONHOMME_TEST_POSTGRES_URL: postgres://bonhomme:bonhomme@127.0.0.1:5432/bonhomme
+    services:
+      postgres:
+        image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+        env:
+          POSTGRES_DB: bonhomme
+          POSTGRES_USER: bonhomme
+          POSTGRES_PASSWORD: bonhomme
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bonhomme -d bonhomme"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install secret scanner
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          install_dir="$RUNNER_TEMP/gitleaks-bin"
+          curl --fail --silent --show-error --location \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$archive"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $archive" \
+            | sha256sum --check --strict
+          mkdir "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" gitleaks
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Scan Git history and transfer tree for secrets
+        run: |
+          gitleaks git --redact --no-banner .
+          gitleaks dir --redact --no-banner .
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Install TypeScript compiler
+        working-directory: demo
+        run: npm ci
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - name: Install Rust dependency auditor
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      - name: Audit Rust dependencies
+        run: cargo audit
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Verify migrations against Postgres
+        run: >-
+          cargo test --locked -p bonhomme-engine
+          storage_conformance_tests::postgres_storage_conformance -- --exact
+
+      - name: Verify deterministic semantic merge benchmark
+        shell: bash
+        run: |
+          first="$RUNNER_TEMP/semantic-benchmark-first.json"
+          second="$RUNNER_TEMP/semantic-benchmark-second.json"
+          cargo run --locked -p bonhomme -- git benchmark > "$first"
+          cargo run --locked -p bonhomme -- git benchmark > "$second"
+          cmp "$first" "$second"
+          sha256sum "$first"
+
+      - name: Record validated benchmark timing evidence
+        shell: bash
+        env:
+          BONHOMME_TSC: ${{ github.workspace }}/demo/node_modules/.bin/tsc
+        run: |
+          measured="$RUNNER_TEMP/semantic-benchmark-validated.json"
+          cargo run --locked -p bonhomme -- git benchmark --validate --measure-time \
+            | tee "$measured"
+          jq -e \
+            '.failed == 0 and .timingMode == "wall_clock" and (.elapsedMicros | type == "number")' \
+            "$measured"
+
+      - name: Validate production configuration
+        shell: bash
+        run: |
+          # Ephemeral test-only token: generated for this check and never stored or uploaded.
+          BONHOMME_API_TOKEN="$(openssl rand -hex 32)" \
+          BONHOMME_API_TENANTS='ci-production' \
+          BONHOMME_API_SUBJECT='ci-production-validator' \
+          BONHOMME_API_ROLE='writer' \
+          DATABASE_URL='postgres://bonhomme:bonhomme@127.0.0.1:5432/bonhomme' \
+          cargo run --locked -p bonhomme -- production check \
+            --config deploy/bonhomme.production.toml \
+            --addr 0.0.0.0:3030
+
+  portability:
+    name: Portability (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Check workspace portability
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Test core protocol
+        run: cargo test --locked -p bonhomme-core
+
+      - name: Test engine library
+        run: cargo test --locked -p bonhomme-engine --lib
+
+      - name: Test Git bridge
+        run: cargo test --locked -p bonhomme cli::git_bridge::tests
+
+      - name: Test API surface
+        run: cargo test --locked -p bonhomme api::tests
+
+  demo:
+    name: Demo
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: demo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test scripts
+        run: npm test
+
+      - name: Build
+        run: npm run build

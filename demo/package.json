@@ -7,11 +7,14 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "test": "node --test \"scripts/*.test.mjs\"",
+    "preview": "vite preview",
+    "swarm:codex": "node scripts/codex-swarm.mjs"
   },
   "dependencies": {
     "@primer/octicons-react": "^19.28.1",
     "@primer/react": "^38.29.0",
+    "framer-motion": "^12.40.0",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.561.0",
     "react": "^19.2.6",

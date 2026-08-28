@@ -1,4 +1,4 @@
-export const API_BASE = import.meta.env.VITE_BONHOMME_API ?? 'http://127.0.0.1:3030'
+export const API_BASE = import.meta.env.VITE_BONHOMME_API ?? ''
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {

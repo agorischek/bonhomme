@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::Result;
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, SymbolNode,
-    ValidateFuture, metadata_string,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    SourceFidelity, SymbolGranularity, SymbolNode, ValidateFuture, ValidationStrength,
+    metadata_string,
 };
 use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 use serde_json::json;
@@ -36,6 +37,18 @@ impl Handler for MarkdownHandler {
 }
 
 impl LanguagePlugin for MarkdownHandler {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::structural(
+            SourceFidelity::ByteExact,
+            SymbolGranularity::TopLevel,
+            ValidationStrength::None,
+        )
+        .with_limitations(&[
+            "merge identities are heading paths rather than inline syntax",
+            "no independent post-render Markdown validator is configured",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         let mut files = file_symbols(graph)
             .map(|file_symbol| RenderedFile {

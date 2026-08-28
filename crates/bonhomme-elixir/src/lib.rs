@@ -11,7 +11,8 @@ mod tests;
 
 use anyhow::Result;
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    ValidateFuture, ValidationStrength,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -46,6 +47,13 @@ impl Handler for ElixirPlugin {
 }
 
 impl LanguagePlugin for ElixirPlugin {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::semantic(ValidationStrength::Compiler).with_limitations(&[
+            "protocols, behaviours, guards, and umbrella-project semantics are not fully modeled",
+            "alias and import resolution is conservative",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }

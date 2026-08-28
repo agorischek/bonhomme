@@ -5,12 +5,24 @@ use uuid::Uuid;
 
 use super::{Operation, OperationRecord, ReferenceNode, SymbolNameKey, SymbolNode};
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticGraph {
     pub symbols: BTreeMap<Uuid, SymbolNode>,
     pub references: BTreeMap<Uuid, ReferenceNode>,
     pub applied_operations: Vec<Uuid>,
+    /// Runtime-only sibling uniqueness index. It is rebuilt lazily after deserialization and is not
+    /// part of the semantic graph wire format or equality contract.
+    #[serde(skip)]
+    pub(crate) symbol_names: BTreeSet<SymbolNameKey>,
+}
+
+impl PartialEq for SemanticGraph {
+    fn eq(&self, other: &Self) -> bool {
+        self.symbols == other.symbols
+            && self.references == other.references
+            && self.applied_operations == other.applied_operations
+    }
 }
 
 impl SemanticGraph {
@@ -19,6 +31,7 @@ impl SemanticGraph {
     }
 
     pub fn apply_operation(&mut self, operation_id: Uuid, operation: &Operation) -> Result<()> {
+        self.ensure_symbol_name_index();
         let ordinal = self.applied_operations.len() as i64 + 1;
 
         match operation {
@@ -59,6 +72,11 @@ impl SemanticGraph {
                         ordinal,
                     },
                 );
+                self.symbol_names.insert(SymbolNameKey {
+                    parent_id: *parent_id,
+                    kind: kind.clone(),
+                    name: name.clone(),
+                });
             }
             Operation::DeleteSymbol { symbol_id } => {
                 if !self.symbols.contains_key(symbol_id) {
@@ -76,7 +94,12 @@ impl SemanticGraph {
                 }) {
                     bail!("cannot delete symbol {symbol_id} while references still point at it");
                 }
-                self.symbols.remove(symbol_id);
+                let removed = self.symbols.remove(symbol_id).expect("checked above");
+                self.symbol_names.remove(&SymbolNameKey {
+                    parent_id: removed.parent_id,
+                    kind: removed.kind,
+                    name: removed.name,
+                });
             }
             Operation::UpdateSymbol {
                 symbol_id,
@@ -99,9 +122,20 @@ impl SemanticGraph {
                     bail!("duplicate {} symbol named {}", current.kind, name);
                 }
 
+                let old_key = SymbolNameKey {
+                    parent_id: current.parent_id,
+                    kind: current.kind.clone(),
+                    name: current.name.clone(),
+                };
                 let symbol = self.symbols.get_mut(symbol_id).expect("checked above");
                 if let Some(name) = name {
                     symbol.name = name.clone();
+                    self.symbol_names.remove(&old_key);
+                    self.symbol_names.insert(SymbolNameKey {
+                        parent_id: symbol.parent_id,
+                        kind: symbol.kind.clone(),
+                        name: symbol.name.clone(),
+                    });
                 }
                 if let Some(body) = body {
                     symbol.body = Some(body.clone());
@@ -145,7 +179,18 @@ impl SemanticGraph {
                     );
                 }
                 let symbol = self.symbols.get_mut(symbol_id).expect("checked above");
+                let old_key = SymbolNameKey {
+                    parent_id: symbol.parent_id,
+                    kind: symbol.kind.clone(),
+                    name: symbol.name.clone(),
+                };
                 symbol.parent_id = *new_parent_id;
+                self.symbol_names.remove(&old_key);
+                self.symbol_names.insert(SymbolNameKey {
+                    parent_id: symbol.parent_id,
+                    kind: symbol.kind.clone(),
+                    name: symbol.name.clone(),
+                });
             }
             Operation::CreateReference {
                 reference_id,
@@ -229,12 +274,34 @@ impl SemanticGraph {
         name: &str,
         exclude_id: Option<Uuid>,
     ) -> bool {
-        self.symbols.values().any(|symbol| {
-            symbol.parent_id == parent_id
-                && symbol.kind == kind
-                && symbol.name == name
-                && Some(symbol.id) != exclude_id
+        let key = SymbolNameKey {
+            parent_id,
+            kind: kind.to_string(),
+            name: name.to_string(),
+        };
+        if !self.symbol_names.contains(&key) {
+            return false;
+        }
+        exclude_id.is_none_or(|excluded| {
+            self.symbols.get(&excluded).is_none_or(|symbol| {
+                symbol.parent_id != parent_id || symbol.kind != kind || symbol.name != name
+            })
         })
+    }
+
+    fn ensure_symbol_name_index(&mut self) {
+        if self.symbol_names.len() == self.symbols.len() {
+            return;
+        }
+        self.symbol_names = self
+            .symbols
+            .values()
+            .map(|symbol| SymbolNameKey {
+                parent_id: symbol.parent_id,
+                kind: symbol.kind.clone(),
+                name: symbol.name.clone(),
+            })
+            .collect();
     }
 }
 
@@ -528,5 +595,51 @@ fn remap_operation(op: Operation, remap: &BTreeMap<Uuid, Uuid>) -> Operation {
             kind,
         },
         Operation::DeleteReference { reference_id } => Operation::DeleteReference { reference_id },
+    }
+}
+
+#[cfg(test)]
+mod index_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn create(id: u128, name: &str) -> Operation {
+        Operation::CreateSymbol {
+            symbol_id: Uuid::from_u128(id),
+            parent_id: None,
+            kind: "function".to_string(),
+            name: name.to_string(),
+            body: None,
+            metadata: json!({}),
+        }
+    }
+
+    #[test]
+    fn runtime_name_index_is_not_serialized_and_rebuilds_before_replay() {
+        let mut graph = SemanticGraph::default();
+        graph
+            .apply_operation(Uuid::from_u128(11), &create(1, "one"))
+            .unwrap();
+        graph
+            .apply_operation(Uuid::from_u128(12), &create(2, "two"))
+            .unwrap();
+
+        let value = serde_json::to_value(&graph).unwrap();
+        assert!(value.get("symbolNames").is_none());
+        let mut decoded: SemanticGraph = serde_json::from_value(value).unwrap();
+        assert!(decoded.symbol_names.is_empty());
+        let duplicate_rename = Operation::UpdateSymbol {
+            symbol_id: Uuid::from_u128(2),
+            name: Some("one".to_string()),
+            body: None,
+            metadata: None,
+        };
+        assert!(
+            decoded
+                .apply_operation(Uuid::from_u128(13), &duplicate_rename)
+                .is_err()
+        );
+        assert_eq!(decoded, graph);
     }
 }

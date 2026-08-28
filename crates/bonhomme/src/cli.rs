@@ -1,8 +1,11 @@
 mod commands;
+pub(crate) mod conflict_workspace;
 mod files;
+mod git_bridge;
 mod queries;
 pub(crate) mod session;
 mod slice_audit;
+mod slice_workspace;
 
 use crate::agents;
 use crate::api;
@@ -41,6 +44,16 @@ enum Command {
     Explore(ExploreArgs),
     Init(InitArgs),
     Import(ImportArgs),
+    /// Import, export, or evaluate ordinary Git revisions without replacing Git as the ledger.
+    Git {
+        #[command(subcommand)]
+        command: GitCommand,
+    },
+    /// Validate production configuration and verify operational integrity artifacts.
+    Production {
+        #[command(subcommand)]
+        command: ProductionCommand,
+    },
     Branch {
         #[command(subcommand)]
         command: BranchCommand,
@@ -54,6 +67,10 @@ enum Command {
         command: SliceCommand,
     },
     Merge(MergeArgs),
+    Conflict {
+        #[command(subcommand)]
+        command: ConflictCommand,
+    },
     Validate(BranchRefArgs),
     Render(RenderArgs),
     /// Coauth-session write-back: round-trip fidelity check and render-back into the working tree.
@@ -117,6 +134,109 @@ struct ImportArgs {
 }
 
 #[derive(Subcommand)]
+enum GitCommand {
+    /// Import an arbitrary Git commit without checking it out in the user's working tree.
+    Import(GitImportArgs),
+    /// Export a Bonhomme branch as a standalone Git worktree and report its deterministic tree ID.
+    Export(GitExportArgs),
+    /// Compare Git's three-way merge with Bonhomme's semantic merge in read-only shadow mode.
+    Shadow(GitShadowArgs),
+    /// Run a reproducible directory-backed Git-vs-Bonhomme benchmark corpus.
+    Benchmark(GitBenchmarkArgs),
+}
+
+#[derive(Subcommand)]
+enum ProductionCommand {
+    /// Fail closed when configuration is unsafe or incomplete for a network deployment.
+    Check(ProductionCheckArgs),
+    /// Verify sequence continuity and hashes in the configured append-only audit log.
+    VerifyAudit(VerifyAuditArgs),
+}
+
+#[derive(Args)]
+struct ProductionCheckArgs {
+    /// Validate this manifest instead of the discovered bonhomme.toml.
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Intended production listener; non-loopback is recommended and requires authentication.
+    #[arg(long, default_value = "0.0.0.0:3030")]
+    addr: SocketAddr,
+}
+
+#[derive(Args)]
+struct VerifyAuditArgs {
+    /// Audit JSONL path. Defaults to <project-root>/.bonhomme/audit.jsonl.
+    #[arg(long)]
+    path: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct GitImportArgs {
+    /// Git working tree or bare repository containing the revision.
+    #[arg(long, default_value = ".")]
+    git_dir: PathBuf,
+    /// Commit-ish to import. It is resolved and recorded as a full commit object ID.
+    #[arg(long, default_value = "HEAD")]
+    revision: String,
+    /// Logical Bonhomme repository name.
+    #[arg(long)]
+    repo: Option<String>,
+    /// Bonhomme branch receiving the imported snapshot.
+    #[arg(long, default_value = "main")]
+    branch: String,
+    /// Replace the logical Bonhomme repository before importing.
+    #[arg(long, default_value_t = false)]
+    reset: bool,
+    /// Skip configured language-toolchain validation after import.
+    #[arg(long, default_value_t = false)]
+    no_validate: bool,
+}
+
+#[derive(Args)]
+struct GitExportArgs {
+    /// Logical Bonhomme repository name.
+    #[arg(long)]
+    repo: Option<String>,
+    #[arg(long, default_value = "main")]
+    branch: String,
+    /// New or empty directory that will become a standalone Git worktree.
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Args)]
+struct GitShadowArgs {
+    /// Git working tree or bare repository containing all three revisions.
+    #[arg(long, default_value = ".")]
+    git_dir: PathBuf,
+    /// Explicit merge base commit-ish.
+    #[arg(long)]
+    base: String,
+    /// Target-side commit-ish.
+    #[arg(long)]
+    ours: String,
+    /// Source-side commit-ish.
+    #[arg(long)]
+    theirs: String,
+    /// Run configured language toolchains against a safe semantic result.
+    #[arg(long, default_value_t = false)]
+    validate: bool,
+}
+
+#[derive(Args)]
+struct GitBenchmarkArgs {
+    /// Corpus whose immediate child directories contain case.toml and tree fixtures.
+    #[arg(long, default_value = "benchmarks/semantic-merge/cases")]
+    corpus: PathBuf,
+    /// Run configured language toolchains against safe semantic results.
+    #[arg(long, default_value_t = false)]
+    validate: bool,
+    /// Include wall-clock timings. Omit for byte-for-byte reproducible JSON reports.
+    #[arg(long, default_value_t = false)]
+    measure_time: bool,
+}
+
+#[derive(Subcommand)]
 enum BranchCommand {
     Create(BranchCreateArgs),
 }
@@ -161,6 +281,12 @@ struct SliceCreateArgs {
     branch: String,
     #[arg(long)]
     symbol: Option<String>,
+    /// Write the checked-out slice to this directory instead of the default .bonhomme/slices path.
+    #[arg(long, conflicts_with = "json")]
+    out: Option<PathBuf>,
+    /// Print the legacy JSON slice to stdout instead of checking out real files.
+    #[arg(long, default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Args)]
@@ -179,9 +305,12 @@ struct SliceApplyArgs {
     slice_id: Option<Uuid>,
     #[arg(long)]
     original: Option<PathBuf>,
-    /// Edited rendered file(s), or the full slice JSON returned by `slice create`.
+    /// Checked-out slice directory. Defaults to the active slice from the last `slice create`.
+    #[arg(long, conflicts_with = "modified")]
+    dir: Option<PathBuf>,
+    /// Legacy edited rendered file(s), or a full slice JSON object from `slice create --json`.
     #[arg(long)]
-    modified: PathBuf,
+    modified: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -193,6 +322,56 @@ struct MergeArgs {
     source: String,
     #[arg(long, default_value = "main")]
     target: String,
+}
+
+#[derive(Subcommand)]
+enum ConflictCommand {
+    List(ConflictListArgs),
+    Show(ConflictShowArgs),
+    Checkout(ConflictCheckoutArgs),
+    Resolve(ConflictResolveArgs),
+    Abandon(ConflictAbandonArgs),
+}
+
+#[derive(Args)]
+struct ConflictListArgs {
+    /// Logical bonhomme repository name. Defaults to the active session repo, then repo root name.
+    #[arg(long)]
+    repo: Option<String>,
+}
+
+#[derive(Args)]
+struct ConflictShowArgs {
+    conflict_id: Uuid,
+    #[arg(long, default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct ConflictCheckoutArgs {
+    conflict_id: Uuid,
+    /// Write the conflict workspace to this directory instead of .bonhomme/conflicts/<id>.
+    #[arg(long)]
+    out: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct ConflictResolveArgs {
+    conflict_id: Uuid,
+    /// Conflict workspace directory or its resolved/ subdirectory. Defaults to the active checkout.
+    #[arg(long)]
+    dir: Option<PathBuf>,
+    #[arg(long, default_value = "agent")]
+    agent: String,
+    #[arg(long, default_value_t = false)]
+    accept_drop: bool,
+}
+
+#[derive(Args)]
+struct ConflictAbandonArgs {
+    conflict_id: Uuid,
+    #[arg(long)]
+    reason: Option<String>,
 }
 
 #[derive(Args)]
@@ -378,58 +557,190 @@ pub async fn run() -> Result<()> {
         active_session.as_ref(),
         &cli.command,
     );
+    let audit = match cli.command.mutation_audit_action() {
+        Some(action) => Some(crate::security::CliMutationAudit::begin(&root, action).await?),
+        None => None,
+    };
 
-    match cli.command {
-        Command::Agents(args) => {
-            agents::run(
-                args,
-                &config,
-                &root,
-                active_session.as_ref(),
-                explicit_database_url.as_deref(),
-                &database_url,
-            )
-            .await
+    let result: Result<()> = async {
+        match cli.command {
+            Command::Agents(args) => {
+                agents::run(
+                    args,
+                    &config,
+                    &root,
+                    active_session.as_ref(),
+                    explicit_database_url.as_deref(),
+                    &database_url,
+                )
+                .await
+            }
+            Command::Server(args) => {
+                api::serve(Some(database_url), &config, &root, args.addr).await
+            }
+            Command::Explore(args) => {
+                let repository_name = match args.repo {
+                    Some(repo) => repo,
+                    None => active_session
+                        .as_ref()
+                        .map(|session| session.repository.clone())
+                        .map(Ok)
+                        .unwrap_or_else(|| default_repository_name(&root))?,
+                };
+                let storage = Storage::connect(
+                    &database_url,
+                    crate::plugins::language_registry(&config, &root),
+                )
+                .await?;
+                storage.migrate().await?;
+                explorer::serve(
+                    storage,
+                    root.clone(),
+                    repository_name,
+                    args.branch,
+                    explorer::config_label(&root),
+                    explorer::database_label(&database_url),
+                    args.addr,
+                    args.open,
+                )
+                .await
+            }
+            Command::Session { command } => {
+                session::run(command, &config, &root, explicit_database_url.as_deref()).await
+            }
+            Command::Git {
+                command: GitCommand::Shadow(args),
+            } => {
+                let plugin = crate::plugins::language_registry(&config, &root);
+                git_bridge::run_shadow(plugin.as_ref(), args).await
+            }
+            Command::Git {
+                command: GitCommand::Benchmark(args),
+            } => {
+                let plugin = crate::plugins::language_registry(&config, &root);
+                git_bridge::run_benchmark(plugin.as_ref(), args, &root).await
+            }
+            Command::Production { command } => match command {
+                ProductionCommand::Check(args) => {
+                    let checked_config = match args.config {
+                        Some(path) => crate::config::load(&path)?,
+                        None => config,
+                    };
+                    let checked_database_url = crate::config::resolve_database_url(
+                        explicit_database_url.clone(),
+                        &checked_config,
+                        &root,
+                    );
+                    crate::operations::check_production(
+                        &checked_config,
+                        &checked_database_url,
+                        args.addr,
+                    )
+                }
+                ProductionCommand::VerifyAudit(args) => {
+                    let path = args
+                        .path
+                        .unwrap_or_else(|| root.join(".bonhomme").join("audit.jsonl"));
+                    crate::operations::verify_audit(&path).await
+                }
+            },
+            command => {
+                let storage = Storage::connect(
+                    &database_url,
+                    crate::plugins::language_registry(&config, &root),
+                )
+                .await?;
+                storage.migrate().await?;
+                run_storage_command(storage, command, &root).await
+            }
         }
-        Command::Server(args) => api::serve(Some(database_url), &config, &root, args.addr).await,
-        Command::Explore(args) => {
-            let repository_name = match args.repo {
-                Some(repo) => repo,
-                None => active_session
-                    .as_ref()
-                    .map(|session| session.repository.clone())
-                    .map(Ok)
-                    .unwrap_or_else(|| default_repository_name(&root))?,
+    }
+    .await;
+
+    if let Some(audit) = audit {
+        let succeeded = result.is_ok();
+        if let Err(audit_error) = audit.finish(succeeded).await {
+            return match result {
+                Ok(()) => Err(audit_error.context(
+                    "CLI mutation completed but its durable audit outcome could not be written; inspect state before retrying",
+                )),
+                Err(command_error) => Err(command_error.context(format!(
+                    "the CLI mutation also failed to write its audit outcome: {audit_error}"
+                ))),
             };
-            let storage = Storage::connect(
-                &database_url,
-                crate::plugins::language_registry(&config, &root),
-            )
-            .await?;
-            storage.migrate().await?;
-            explorer::serve(
-                storage,
-                root.clone(),
-                repository_name,
-                args.branch,
-                explorer::config_label(&root),
-                explorer::database_label(&database_url),
-                args.addr,
-                args.open,
-            )
-            .await
         }
-        Command::Session { command } => {
-            session::run(command, &config, &root, explicit_database_url.as_deref()).await
-        }
-        command => {
-            let storage = Storage::connect(
-                &database_url,
-                crate::plugins::language_registry(&config, &root),
-            )
-            .await?;
-            storage.migrate().await?;
-            run_storage_command(storage, command, &root).await
+    }
+    result
+}
+
+impl Command {
+    /// Return a static audit action for commands that persist Bonhomme state or write a durable
+    /// user-visible artifact. Arguments are deliberately excluded so secrets and payload bodies can
+    /// never enter the audit log through command classification.
+    fn mutation_audit_action(&self) -> Option<&'static str> {
+        match self {
+            Self::Init(_) => Some("init"),
+            Self::Import(_) => Some("import"),
+            Self::Git {
+                command: GitCommand::Import(_),
+            } => Some("git/import"),
+            Self::Git {
+                command: GitCommand::Export(_),
+            } => Some("git/export"),
+            Self::Branch {
+                command: BranchCommand::Create(_),
+            } => Some("branch/create"),
+            Self::Task {
+                command: TaskCommand::Create(_),
+            } => Some("task/create"),
+            Self::Slice {
+                command: SliceCommand::Create(_),
+            } => Some("slice/create"),
+            Self::Slice {
+                command: SliceCommand::Apply(_),
+            } => Some("slice/apply"),
+            Self::Merge(_) => Some("merge"),
+            Self::Conflict {
+                command: ConflictCommand::Checkout(_),
+            } => Some("conflict/checkout"),
+            Self::Conflict {
+                command: ConflictCommand::Resolve(_),
+            } => Some("conflict/resolve"),
+            Self::Conflict {
+                command: ConflictCommand::Abandon(_),
+            } => Some("conflict/abandon"),
+            Self::Render(_) => Some("render"),
+            Self::Session {
+                command: SessionCommand::Start(_),
+            } => Some("session/start"),
+            Self::Session {
+                command: SessionCommand::Land(_),
+            } => Some("session/land"),
+            Self::Simulate(_) => Some("simulate"),
+            Self::Demo {
+                command: DemoCommand::Reset,
+            } => Some("demo/reset"),
+            Self::Demo {
+                command: DemoCommand::Spawn(_),
+            } => Some("demo/spawn"),
+            Self::Demo {
+                command: DemoCommand::MergeAll,
+            } => Some("demo/merge-all"),
+            Self::Agents(_)
+            | Self::Server(_)
+            | Self::Explore(_)
+            | Self::Git {
+                command: GitCommand::Shadow(_) | GitCommand::Benchmark(_),
+            }
+            | Self::Production { .. }
+            | Self::Conflict {
+                command: ConflictCommand::List(_) | ConflictCommand::Show(_),
+            }
+            | Self::Validate(_)
+            | Self::Session {
+                command: SessionCommand::Check(_) | SessionCommand::Review(_),
+            }
+            | Self::Query { .. } => None,
         }
     }
 }
@@ -459,6 +770,9 @@ fn command_uses_active_session_database(command: &Command) -> bool {
             | Command::Explore(_)
             | Command::Init(_)
             | Command::Import(_)
+            | Command::Git {
+                command: GitCommand::Import(_) | GitCommand::Export(_),
+            }
             | Command::Branch { .. }
             | Command::Task { .. }
             | Command::Slice { .. }
@@ -474,4 +788,234 @@ fn default_repository_name(root: &Path) -> Result<String> {
         .and_then(|name| name.to_str())
         .map(ToOwned::to_owned)
         .with_context(|| format!("could not infer repository name from {}", root.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn audit_action(arguments: &[&str]) -> Option<&'static str> {
+        Cli::try_parse_from(arguments)
+            .unwrap()
+            .command
+            .mutation_audit_action()
+    }
+
+    #[test]
+    fn persistent_cli_commands_have_static_audit_classifications() {
+        assert_eq!(
+            audit_action(&["bonhomme", "init", "--name", "repo"]),
+            Some("init")
+        );
+        assert_eq!(
+            audit_action(&[
+                "bonhomme", "git", "export", "--repo", "repo", "--out", "exported"
+            ]),
+            Some("git/export")
+        );
+        assert_eq!(
+            audit_action(&[
+                "bonhomme",
+                "slice",
+                "apply",
+                "--repo",
+                "repo",
+                "--modified",
+                "edited.json",
+                "--original",
+                "base.json"
+            ]),
+            Some("slice/apply")
+        );
+        assert_eq!(
+            audit_action(&[
+                "bonhomme",
+                "conflict",
+                "resolve",
+                "00000000-0000-0000-0000-000000000001"
+            ]),
+            Some("conflict/resolve")
+        );
+        assert_eq!(
+            audit_action(&["bonhomme", "session", "land", "--out", "rendered"]),
+            Some("session/land")
+        );
+        assert_eq!(
+            audit_action(&["bonhomme", "demo", "reset"]),
+            Some("demo/reset")
+        );
+    }
+
+    #[test]
+    fn read_only_and_service_cli_commands_are_not_audited_as_mutations() {
+        assert_eq!(
+            audit_action(&["bonhomme", "validate", "--repo", "repo"]),
+            None
+        );
+        assert_eq!(
+            audit_action(&[
+                "bonhomme",
+                "query",
+                "find-symbol",
+                "--repo",
+                "repo",
+                "--name",
+                "OrderService"
+            ]),
+            None
+        );
+        assert_eq!(
+            audit_action(&[
+                "bonhomme", "git", "shadow", "--base", "base", "--ours", "ours", "--theirs",
+                "theirs"
+            ]),
+            None
+        );
+        assert_eq!(
+            audit_action(&["bonhomme", "conflict", "list", "--repo", "repo"]),
+            None
+        );
+        assert_eq!(audit_action(&["bonhomme", "session", "check"]), None);
+        // Long-running services audit their mutations at the authenticated request boundary instead
+        // of emitting a misleading CLI outcome only when the process eventually exits.
+        assert_eq!(audit_action(&["bonhomme", "server"]), None);
+        assert_eq!(audit_action(&["bonhomme", "explore"]), None);
+    }
+
+    #[test]
+    fn every_cli_leaf_has_an_explicit_audit_classification() {
+        let cases: Vec<(Vec<&str>, Option<&str>)> = vec![
+            (vec!["bonhomme", "agents"], None),
+            (vec!["bonhomme", "server"], None),
+            (vec!["bonhomme", "explore"], None),
+            (vec!["bonhomme", "init"], Some("init")),
+            (vec!["bonhomme", "import", "--path", "."], Some("import")),
+            (vec!["bonhomme", "git", "import"], Some("git/import")),
+            (
+                vec!["bonhomme", "git", "export", "--out", "exported"],
+                Some("git/export"),
+            ),
+            (
+                vec![
+                    "bonhomme", "git", "shadow", "--base", "base", "--ours", "ours", "--theirs",
+                    "theirs",
+                ],
+                None,
+            ),
+            (vec!["bonhomme", "git", "benchmark"], None),
+            (vec!["bonhomme", "production", "check"], None),
+            (vec!["bonhomme", "production", "verify-audit"], None),
+            (
+                vec!["bonhomme", "branch", "create", "--name", "feature"],
+                Some("branch/create"),
+            ),
+            (
+                vec!["bonhomme", "task", "create", "--title", "task"],
+                Some("task/create"),
+            ),
+            (vec!["bonhomme", "slice", "create"], Some("slice/create")),
+            (
+                vec![
+                    "bonhomme",
+                    "slice",
+                    "apply",
+                    "--modified",
+                    "edited.json",
+                    "--original",
+                    "base.json",
+                ],
+                Some("slice/apply"),
+            ),
+            (
+                vec!["bonhomme", "merge", "--source", "feature"],
+                Some("merge"),
+            ),
+            (vec!["bonhomme", "conflict", "list"], None),
+            (
+                vec![
+                    "bonhomme",
+                    "conflict",
+                    "show",
+                    "00000000-0000-0000-0000-000000000001",
+                ],
+                None,
+            ),
+            (
+                vec![
+                    "bonhomme",
+                    "conflict",
+                    "checkout",
+                    "00000000-0000-0000-0000-000000000001",
+                ],
+                Some("conflict/checkout"),
+            ),
+            (
+                vec![
+                    "bonhomme",
+                    "conflict",
+                    "resolve",
+                    "00000000-0000-0000-0000-000000000001",
+                ],
+                Some("conflict/resolve"),
+            ),
+            (
+                vec![
+                    "bonhomme",
+                    "conflict",
+                    "abandon",
+                    "00000000-0000-0000-0000-000000000001",
+                ],
+                Some("conflict/abandon"),
+            ),
+            (vec!["bonhomme", "validate"], None),
+            (vec!["bonhomme", "render"], Some("render")),
+            (vec!["bonhomme", "session", "start"], Some("session/start")),
+            (vec!["bonhomme", "session", "check"], None),
+            (vec!["bonhomme", "session", "review"], None),
+            (
+                vec!["bonhomme", "session", "land", "--out", "rendered"],
+                Some("session/land"),
+            ),
+            (vec!["bonhomme", "simulate"], Some("simulate")),
+            (
+                vec!["bonhomme", "query", "find-symbol", "--name", "x"],
+                None,
+            ),
+            (
+                vec!["bonhomme", "query", "find-references", "--name", "x"],
+                None,
+            ),
+            (
+                vec!["bonhomme", "query", "find-callers", "--name", "x"],
+                None,
+            ),
+            (
+                vec!["bonhomme", "query", "find-callees", "--name", "x"],
+                None,
+            ),
+            (
+                vec!["bonhomme", "query", "find-dependencies", "--name", "x"],
+                None,
+            ),
+            (
+                vec!["bonhomme", "query", "find-dependents", "--name", "x"],
+                None,
+            ),
+            (vec!["bonhomme", "demo", "reset"], Some("demo/reset")),
+            (vec!["bonhomme", "demo", "spawn"], Some("demo/spawn")),
+            (
+                vec!["bonhomme", "demo", "merge-all"],
+                Some("demo/merge-all"),
+            ),
+        ];
+
+        assert_eq!(cases.len(), 37);
+        for (arguments, expected) in cases {
+            assert_eq!(
+                audit_action(&arguments),
+                expected,
+                "arguments: {arguments:?}"
+            );
+        }
+    }
 }

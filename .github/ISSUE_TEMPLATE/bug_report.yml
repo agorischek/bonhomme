@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible Bonhomme defect
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: Do not report vulnerabilities or include secrets here; follow SECURITY.md instead.
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Observed behavior
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide minimal, sanitized commands or fixtures.
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Bonhomme commit
+      placeholder: Full commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Rust version, storage backend, and relevant toolchain versions.
+    validations:
+      required: true

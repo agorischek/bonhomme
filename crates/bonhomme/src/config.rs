@@ -15,7 +15,11 @@ use std::path::{Path, PathBuf};
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub storage: StorageConfig,
-    /// Per-language toolchain binary paths. `typescript`/`tsc`, `python`/`python3`, `dotnet`, and
+    /// HTTP server security, resource, and timeout policy. Authentication secrets are read only
+    /// from environment variables and are never accepted in this file.
+    pub server: ServerConfig,
+    /// Per-language toolchain binary paths. `typescript`/`tsc`, `python`/`python3`, `dotnet`,
+    /// `java`/`javac`, `php`, `ruby`, `kotlin`/`kotlinc`, `swift`/`swiftc`, and
     /// `elixirc`/`elixir` are wired at the composition root; other plugins can opt in without
     /// changing the schema.
     pub toolchain: BTreeMap<String, String>,
@@ -29,6 +33,34 @@ pub struct Config {
     /// should be opt-in for session startup because real repos may need dependencies, services, or
     /// generated artifacts before they build.
     pub validation: ValidationConfig,
+    /// Audit durability and export policy. Local development defaults to a durable, hash-chained
+    /// file; production must explicitly require export into an external immutable system.
+    pub audit: AuditConfig,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ServerConfig {
+    /// Require bearer authentication even when listening on loopback. Non-loopback listeners
+    /// always require credentials regardless of this setting.
+    pub require_auth: bool,
+    /// Maximum request body accepted by the API.
+    pub max_request_bytes: usize,
+    /// Maximum duration for one HTTP request.
+    pub request_timeout_seconds: u64,
+    /// Maximum number of requests executing concurrently in one server process.
+    pub max_concurrent_requests: usize,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            require_auth: false,
+            max_request_bytes: 2 * 1024 * 1024,
+            request_timeout_seconds: 120,
+            max_concurrent_requests: 64,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -49,6 +81,22 @@ pub struct GitConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct ValidationConfig {
     pub session_start: SessionValidationMode,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuditConfig {
+    pub export_policy: AuditExportPolicy,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuditExportPolicy {
+    /// Durable and tamper-evident on the local host, but not protected from host-level deletion.
+    #[default]
+    LocalOnly,
+    /// Deployment automation exports and anchors audit heads in an external WORM/immutable system.
+    ExternalWorm,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -82,10 +130,7 @@ pub fn discover(start: &Path) -> Result<(Config, PathBuf)> {
     for dir in start.ancestors() {
         let manifest = dir.join("bonhomme.toml");
         if manifest.is_file() {
-            let text = std::fs::read_to_string(&manifest)
-                .with_context(|| format!("reading {}", manifest.display()))?;
-            let config =
-                toml::from_str(&text).with_context(|| format!("parsing {}", manifest.display()))?;
+            let config = load(&manifest)?;
             return Ok((config, dir.to_path_buf()));
         }
         if git_root.is_none() && dir.join(".git").exists() {
@@ -96,6 +141,14 @@ pub fn discover(start: &Path) -> Result<(Config, PathBuf)> {
         Config::default(),
         git_root.unwrap_or_else(|| start.to_path_buf()),
     ))
+}
+
+/// Load one explicit manifest. Used by deployment checks so a checked-in production template can
+/// be validated without copying it over the developer's local configuration.
+pub fn load(path: &Path) -> Result<Config> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
 }
 
 /// Resolve the storage URL with precedence: CLI flag / `DATABASE_URL` env (collapsed by clap into
@@ -164,6 +217,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_server_resource_policy() {
+        let config: Config = toml::from_str(
+            "[server]\nrequire_auth = true\nmax_request_bytes = 4096\nrequest_timeout_seconds = 30\nmax_concurrent_requests = 8\n",
+        )
+        .unwrap();
+        assert!(config.server.require_auth);
+        assert_eq!(config.server.max_request_bytes, 4096);
+        assert_eq!(config.server.request_timeout_seconds, 30);
+        assert_eq!(config.server.max_concurrent_requests, 8);
+    }
+
+    #[test]
     fn parses_toolchain_section() {
         let config: Config = toml::from_str("[toolchain]\ntypescript = \"tsgo\"\n").unwrap();
         assert_eq!(
@@ -186,6 +251,17 @@ mod tests {
             config.validation.session_start,
             SessionValidationMode::Toolchain
         );
+    }
+
+    #[test]
+    fn audit_export_policy_defaults_local_and_parses_external_worm() {
+        assert_eq!(
+            Config::default().audit.export_policy,
+            AuditExportPolicy::LocalOnly
+        );
+        let config: Config =
+            toml::from_str("[audit]\nexport_policy = \"external-worm\"\n").unwrap();
+        assert_eq!(config.audit.export_policy, AuditExportPolicy::ExternalWorm);
     }
 
     #[test]

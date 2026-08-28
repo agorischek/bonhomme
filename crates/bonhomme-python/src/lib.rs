@@ -11,7 +11,8 @@ mod tests;
 
 use anyhow::Result;
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    ValidateFuture, ValidationStrength,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -46,6 +47,13 @@ impl Handler for PythonPlugin {
 }
 
 impl LanguagePlugin for PythonPlugin {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::semantic(ValidationStrength::Syntax).with_limitations(&[
+            "dynamic dispatch, nested declarations, and package-aware imports are not fully modeled",
+            "validation checks Python syntax, not types",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }

@@ -1,0 +1,5 @@
+name = "Same function changed twice"
+description = "Both sides make incompatible edits to the same TypeScript function."
+expectedGit = "conflict"
+expectedBonhomme = "conflict"
+expectedBaseRoundTrip = true

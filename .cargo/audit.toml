@@ -1,0 +1,14 @@
+[advisories]
+# Security owner: destination repository security team. Tracking: transfer checklist RustSec item
+# (replace with a destination issue URL during transfer). Review by 2026-11-30 and remove sooner
+# when upstream constraints permit. Mitigation: `rsa` is present only in SQLx's disabled MySQL
+# feature metadata (`cargo tree -i rsa` is empty). `lru` comes through Tantivy/Turso; Bonhomme does
+# not use the advisory's panicking-key-destructor plus `catch_unwind` preconditions, and dependency
+# updates remain gated by `cargo audit`; Tantivy does not yet accept the fixed lru 0.18 release.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0253"]
+informational_warnings = ["unmaintained", "unsound"]
+severity_threshold = "low"
+
+[yanked]
+enabled = true
+update_index = true

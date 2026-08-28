@@ -1,0 +1,19 @@
+# Production-safe, secret-free baseline. Inject DATABASE_URL and BONHOMME_API_* through the
+# deployment secret manager; `bonhomme production check --config <this-file>` verifies both.
+
+[server]
+require_auth = true
+max_request_bytes = 2097152
+request_timeout_seconds = 120
+max_concurrent_requests = 64
+
+[git]
+write_back = false
+
+[audit]
+# This declares a deployment requirement, not a built-in remote sink. Production automation must
+# continuously export/anchor verified audit heads in retention-locked/WORM storage.
+export_policy = "external-worm"
+
+[validation]
+session_start = "toolchain"

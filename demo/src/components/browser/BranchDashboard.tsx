@@ -7,7 +7,16 @@ const STATUS_VARIANT: Record<BranchStatus, LabelProps['variant']> = {
   main: 'secondary',
   empty: 'default',
   ready: 'accent',
+  conflicted: 'danger',
   merged: 'success',
+}
+
+const STATUS_LABEL: Record<BranchStatus, string> = {
+  main: 'main',
+  empty: 'editing',
+  ready: 'awaiting merge',
+  conflicted: 'conflict',
+  merged: 'landed',
 }
 
 export function BranchDashboard({
@@ -33,7 +42,7 @@ export function BranchDashboard({
           <div className="bh-branch-head">
             <GitBranchIcon size={15} />
             <strong>{branch.name}</strong>
-            <Label variant={STATUS_VARIANT[branch.status]}>{branch.status}</Label>
+            <Label variant={STATUS_VARIANT[branch.status]}>{STATUS_LABEL[branch.status]}</Label>
           </div>
           <div className="bh-branch-meta">
             by <code>{branch.createdBy}</code> · {branch.ownOperationCount} ops ·{' '}

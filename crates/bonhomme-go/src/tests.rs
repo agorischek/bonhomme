@@ -160,11 +160,19 @@ fn import_scopes_build_variant_methods_by_file_path() {
     let files = vec![
         RenderedFile {
             path: "pkg/console/progress.go".to_string(),
-            content: "package console\n\ntype ProgressBar struct{}\n\nfunc (p *ProgressBar) Update(current int64) string { return \"\" }\n".to_string(),
+            content: concat!(
+                "package console\n\ntype ProgressBar struct{}\n\n",
+                "func (p *ProgressBar) Update(current int64) string { return \"\" }\n"
+            )
+            .to_string(),
         },
         RenderedFile {
             path: "pkg/console/progress_wasm.go".to_string(),
-            content: "package console\n\ntype ProgressBar struct{}\n\nfunc (p *ProgressBar) Update(current int64) string { return \"\" }\n".to_string(),
+            content: concat!(
+                "package console\n\ntype ProgressBar struct{}\n\n",
+                "func (p *ProgressBar) Update(current int64) string { return \"\" }\n"
+            )
+            .to_string(),
         },
     ];
 
@@ -207,7 +215,11 @@ fn import_allows_build_variant_methods_on_shared_receiver() {
         },
         RenderedFile {
             path: "pkg/workflow/dependabot_wasm.go".to_string(),
-            content: "//go:build wasm\n\npackage workflow\n\nfunc (c *Compiler) GenerateDependabotManifests() error { return nil }\n".to_string(),
+            content: concat!(
+                "//go:build wasm\n\npackage workflow\n\n",
+                "func (c *Compiler) GenerateDependabotManifests() error { return nil }\n"
+            )
+            .to_string(),
         },
     ];
 
@@ -258,7 +270,12 @@ async fn methods_render_in_their_original_file_to_keep_imports_valid() {
         },
         RenderedFile {
             path: "json_output.go".to_string(),
-            content: "package engine\n\nimport \"encoding/json\"\n\nfunc (result Result) MarshalJSON() ([]byte, error) {\n\treturn json.Marshal(struct{}{})\n}\n".to_string(),
+            content: concat!(
+                "package engine\n\nimport \"encoding/json\"\n\n",
+                "func (result Result) MarshalJSON() ([]byte, error) {\n",
+                "\treturn json.Marshal(struct{}{})\n}\n"
+            )
+            .to_string(),
         },
     ];
     let graph = materialize_operations(import_go_files(&files).unwrap());

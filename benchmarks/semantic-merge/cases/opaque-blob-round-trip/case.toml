@@ -1,0 +1,7 @@
+name = "Opaque blob byte round trip"
+description = "An unsupported extension stays byte-identical while an independent opaque file is added."
+expectedGit = "safe"
+expectedBonhomme = "safe"
+expectedTree = "expected"
+expectedBaseRoundTrip = true
+expectedBlobPaths = ["data/message.opaque"]

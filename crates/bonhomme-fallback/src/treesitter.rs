@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail};
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, SymbolNode,
-    ValidateFuture, metadata_string,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    SourceFidelity, SymbolGranularity, SymbolNode, ValidateFuture, ValidationStrength,
+    metadata_string,
 };
 use serde_json::json;
 use tree_sitter::{Language, Node, Parser};
@@ -63,6 +64,19 @@ impl Handler for TreeSitterHandler {
 }
 
 impl LanguagePlugin for TreeSitterHandler {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::structural(
+            SourceFidelity::ByteExact,
+            SymbolGranularity::TopLevel,
+            ValidationStrength::None,
+        )
+        .with_limitations(&[
+            "only configured grammars and top-level named declarations are structural",
+            "no compiler or reference analysis is available",
+            "the post-render validation hook is not implemented",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         let mut files = file_symbols(graph)
             .map(|file_symbol| RenderedFile {

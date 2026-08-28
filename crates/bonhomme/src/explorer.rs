@@ -314,7 +314,9 @@ fn render_page(context: &ExplorerContext, snapshot: &ExplorerSnapshot) -> String
     <div class="topbar-tools">
       <form class="top-controls" method="get" action="/">
         <label class="field"><span class="visually-hidden">Branch</span>{branch_select}</label>
-        <label class="field"><span class="visually-hidden">As of operation</span><input type="number" min="0" max="{latest_count}" name="as_of" value="{as_of_value}" placeholder="latest"></label>
+        <label class="field"><span class="visually-hidden">As of operation</span>
+          <input type="number" min="0" max="{latest_count}" name="as_of" value="{as_of_value}" placeholder="latest">
+        </label>
         {symbol_input}
         <button type="submit">View</button>
         <a class="button secondary" href="{latest_href}">Latest</a>

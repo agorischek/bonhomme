@@ -1,0 +1,8 @@
+name = "Invalid TypeScript degrades explicitly"
+description = "An unparseable TypeScript file is retained through the blob floor and reported."
+expectedGit = "safe"
+expectedBonhomme = "safe"
+expectedTree = "expected"
+expectedBaseRoundTrip = true
+expectedBlobPaths = ["src/broken.ts"]
+expectedValidation = "failed"

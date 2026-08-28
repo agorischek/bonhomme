@@ -4,6 +4,13 @@
   color: var(--text);
 }
 
+.view-loading {
+  display: grid;
+  min-height: 50vh;
+  place-items: center;
+  color: var(--muted);
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -16,6 +23,11 @@
   border-bottom: 1px solid var(--border);
   background: rgba(250, 251, 252, 0.94);
   backdrop-filter: blur(10px);
+}
+
+.view-tabs button {
+  min-height: 32px;
+  border-radius: 0;
 }
 
 .brand {
@@ -49,7 +61,7 @@
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
 }
 
 button,
@@ -61,6 +73,32 @@ button,
   background: var(--panel);
   color: var(--text-strong);
   font: inherit;
+}
+
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.toolbar-label {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 7px;
+  border-right: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.toolbar-group-reset {
+  margin-left: 2px;
 }
 
 button {
@@ -94,6 +132,12 @@ button.primary {
   border-color: var(--green);
 }
 
+button.launch {
+  color: #ffffff;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
 button.danger {
   color: #ffffff;
   background: var(--red);
@@ -105,6 +149,7 @@ button.danger {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-height: 34px;
   padding: 0 10px;
 }
 
@@ -150,6 +195,73 @@ main {
   display: grid;
   gap: 18px;
   padding: 18px 22px 28px;
+}
+
+main.workbench-main {
+  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.agents-column,
+.inspector-column {
+  min-width: 0;
+}
+
+.agents-column .section-block {
+  display: flex;
+  flex-direction: column;
+  height: calc(100svh - 172px);
+  min-height: 520px;
+}
+
+.agents-column .agent-grid {
+  flex: 1 1 auto;
+  grid-template-columns: 1fr;
+  max-height: none;
+}
+
+.inspector-column {
+  display: grid;
+  gap: 10px;
+}
+
+.inspector-tabs {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.inspector-tabs button {
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.inspector-tabs button:hover:not(:disabled) {
+  box-shadow: none;
+  background: #eef4fb;
+}
+
+.inspector-tabs button[aria-selected='true'] {
+  color: #ffffff;
+  background: var(--blue);
+}
+
+.inspector-body {
+  min-width: 0;
+}
+
+.inspector-body .section-block {
+  min-width: 0;
 }
 
 .metrics {
@@ -239,21 +351,21 @@ main {
 
 .agent-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
-  gap: 10px;
-  max-height: 400px;
+  grid-template-columns: repeat(auto-fill, minmax(214px, 1fr));
+  gap: 5px;
+  max-height: 430px;
   overflow: auto;
-  padding: 12px;
+  padding: 7px;
 }
 
 .agent-card {
   display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 9px;
-  min-height: 144px;
-  padding: 10px;
+  grid-template-rows: auto auto;
+  gap: 3px;
+  min-height: 46px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 7px;
   background: #ffffff;
 }
 
@@ -278,33 +390,99 @@ main {
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .agent-topline strong {
   color: var(--text-strong);
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.agent-topline span {
+.agent-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.agent-topline .status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border-radius: 999px;
-  padding: 2px 7px;
+  padding: 1px 6px;
   color: var(--muted);
   background: var(--panel-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.agent-topline .status-pill svg {
+  width: 11px;
+  height: 11px;
+}
+
+.agent-card.empty .status-pill svg {
+  animation: spin 1.2s linear infinite;
+}
+
+.agent-card.ready .status-pill {
+  color: #174170;
+  background: #e9f2ff;
+}
+
+.agent-card.merged .status-pill {
+  color: #155c3d;
+  background: #dcf8e8;
+}
+
+.agent-card.conflict .status-pill {
+  color: #8d1f1f;
+  background: #fff0ee;
+}
+
+.agent-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-meta code,
+.agent-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-meta code {
+  color: #174170;
+  font: 10px/1.2 var(--mono);
+}
+
+.agent-meta span {
+  color: var(--muted);
   font-size: 11px;
 }
 
-.agent-card pre {
-  margin: 0;
-  min-height: 52px;
-  overflow: hidden;
-  color: #314256;
-  font: 11px/1.35 var(--mono);
-  white-space: pre-wrap;
+.agent-merge-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
-.agent-card button {
-  min-height: 30px;
-  width: 100%;
+.agent-merge-button svg {
+  width: 12px;
+  height: 12px;
 }
 
 .workbench,
@@ -314,8 +492,14 @@ main {
   gap: 18px;
 }
 
+.metrics-block .metrics {
+  border: 0;
+  border-radius: 0;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
 .graph-tree {
-  max-height: 520px;
+  height: clamp(420px, calc(100svh - 224px), 720px);
   overflow: auto;
   padding: 8px 0;
 }
@@ -348,8 +532,7 @@ main {
 }
 
 .code-pane {
-  min-height: 520px;
-  max-height: 520px;
+  height: clamp(420px, calc(100svh - 224px), 720px);
   margin: 0;
   overflow: auto;
   padding: 14px;
@@ -361,7 +544,7 @@ main {
 
 .operation-log,
 .merge-log {
-  max-height: 320px;
+  height: clamp(420px, calc(100svh - 224px), 720px);
   overflow: auto;
 }
 
@@ -460,6 +643,12 @@ main {
   background: var(--red);
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 1040px) {
   .topbar {
     align-items: flex-start;
@@ -468,6 +657,10 @@ main {
 
   .toolbar {
     justify-content: flex-start;
+  }
+
+  .toolbar-group {
+    flex-wrap: wrap;
   }
 
   .metrics,
@@ -486,7 +679,35 @@ main {
   }
 
   .code-pane {
-    min-height: 360px;
-    max-height: 360px;
+    height: 360px;
+  }
+}
+
+@media (max-width: 760px) {
+  main.workbench-main {
+    grid-template-columns: 1fr;
+  }
+
+  .agents-column .section-block {
+    height: auto;
+    min-height: 0;
+  }
+
+  .agents-column .agent-grid {
+    max-height: 430px;
+  }
+
+  .inspector-tabs {
+    width: 100%;
+  }
+
+  .inspector-tabs button {
+    flex: 1 1 120px;
+  }
+
+  .graph-tree,
+  .operation-log,
+  .merge-log {
+    height: 360px;
   }
 }

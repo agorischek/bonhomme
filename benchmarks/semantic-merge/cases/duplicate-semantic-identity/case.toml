@@ -1,0 +1,5 @@
+name = "Duplicate semantic identity"
+description = "Both sides independently add the same function identity with different bodies."
+expectedGit = "conflict"
+expectedBonhomme = "conflict"
+expectedBaseRoundTrip = true

@@ -1,4 +1,4 @@
-export type BranchStatus = 'main' | 'empty' | 'ready' | 'merged'
+export type BranchStatus = 'main' | 'empty' | 'ready' | 'conflicted' | 'merged'
 export type MergeOutcome = 'SAFE_MERGE' | 'CONFLICT'
 
 export interface BranchSummary {
@@ -7,6 +7,8 @@ export interface BranchSummary {
   basePosition: number
   status: BranchStatus
   ownOperationCount: number
+  operationTypes: string[]
+  touchedSymbolNames: string[]
   createdSymbolCount: number
   createdMethodNames: string[]
   createdBy: string
@@ -102,6 +104,7 @@ export interface MergeConflict {
 export interface MergeResult {
   outcome: MergeOutcome
   conflicts: MergeConflict[]
+  conflictId?: string | null
   sourceBranch: { id: string; name: string }
   targetBranch: { id: string; name: string }
   appendedOperations: OperationView[]
@@ -124,4 +127,23 @@ export interface SimulationResult {
   renderDeterministic: boolean
   toolchainValidated: boolean
   tscValidated: boolean
+}
+
+export interface RealSwarmResponse {
+  state: DemoState
+  pid?: number | null
+  logPath: string
+  model: string
+  agents: number
+  concurrency: number
+  merge: boolean
+  dryRun: boolean
+}
+
+export interface RealSwarmStatus {
+  running: boolean
+  pid?: number | null
+  exitCode?: number | null
+  error?: string | null
+  logPath?: string | null
 }

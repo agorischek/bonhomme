@@ -5,7 +5,9 @@ mod config;
 mod demo;
 mod explorer;
 mod format;
+mod operations;
 mod plugins;
+mod security;
 mod simulation;
 
 #[tokio::main]

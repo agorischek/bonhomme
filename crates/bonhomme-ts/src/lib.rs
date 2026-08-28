@@ -13,7 +13,8 @@ mod tests;
 
 use anyhow::Result;
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    ValidateFuture, ValidationStrength,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -53,6 +54,13 @@ impl Handler for TypeScriptPlugin {
 }
 
 impl LanguagePlugin for TypeScriptPlugin {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::semantic(ValidationStrength::Compiler).with_limitations(&[
+            "the semantic model covers a conservative subset of TypeScript and JavaScript syntax",
+            "references are syntax-derived rather than type-checker-resolved",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }

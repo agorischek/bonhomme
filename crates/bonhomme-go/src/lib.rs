@@ -11,8 +11,8 @@ mod tests;
 
 use anyhow::Result;
 use bonhomme_core::{
-    Handler, LanguagePlugin, Operation, RenderedFile, SemanticGraph, Slice, ValidateFuture,
-    ValidationContext,
+    Handler, LanguagePlugin, Operation, PluginCapabilities, RenderedFile, SemanticGraph, Slice,
+    ValidateFuture, ValidationContext, ValidationStrength,
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -37,6 +37,13 @@ impl Handler for GoPlugin {
 }
 
 impl LanguagePlugin for GoPlugin {
+    fn capabilities(&self) -> PluginCapabilities {
+        PluginCapabilities::semantic(ValidationStrength::WorkspaceCompiler).with_limitations(&[
+            "cross-package repositories and build-tag/cgo semantics are not fully modeled",
+            "references are syntax-derived rather than type-checker-resolved",
+        ])
+    }
+
     fn render(&self, graph: &SemanticGraph) -> Vec<RenderedFile> {
         render_files(graph)
     }

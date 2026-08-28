@@ -15,7 +15,7 @@ function Metric({ icon, label, value }: { icon: ReactNode; label: string; value:
 export function MetricsStrip({ metrics }: { metrics?: DemoMetrics }) {
   return (
     <section className="metrics" aria-label="Repository metrics">
-      <Metric icon={<Database />} label="Postgres ops" value={metrics?.operationCount ?? 0} />
+      <Metric icon={<Database />} label="Semantic ops" value={metrics?.operationCount ?? 0} />
       <Metric icon={<Users />} label="Agent branches" value={metrics?.agentCount ?? 0} />
       <Metric icon={<CheckCircle2 />} label="Merged agents" value={metrics?.mergedAgentCount ?? 0} />
       <Metric icon={<Network />} label="References" value={metrics?.referenceCount ?? 0} />

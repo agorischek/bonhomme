@@ -30,8 +30,11 @@ variances:
         kind: architectural
         reason: Existing cohesive module exceeds repository thresholds; decomposition should be handled as focused follow-up work.
         metrics:
+            scc.code_lines:
+                max: 581
+                reason: Graph replay, reference integrity, snapshots, and validation remain one cohesive state-machine boundary.
             scc.complexity:
-                max: 83
+                max: 90
                 reason: Semantic graph replay and validation are centralized in one core module today.
     crates/bonhomme-core/src/core/tests.rs:
         kind: permanent
@@ -65,15 +68,51 @@ variances:
         reason: Storage backend module size is accepted pending a focused backend decomposition.
         metrics:
             scc.code_lines:
-                max: 536
-                reason: Postgres backend keeps SQL mappings colocated with backend operations.
+                max: 1296
+                reason: Postgres migrations, transactional operation commits, queues, conflicts, and row mappings remain colocated behind one backend implementation.
     crates/bonhomme-engine/src/backend/turso.rs:
         kind: architectural
-        reason: Storage backend module size is accepted pending a focused backend decomposition.
+        reason: The embedded backend implements the complete durable storage contract and transactional helpers in one module.
+        metrics:
+            filesystem.bytes:
+                max: 82222
+            filesystem.longest_line:
+                max: 145
+                reason: A compact SQL/row-mapping expression exceeds the line limit slightly; splitting it independently would obscure the mapping.
+            scc.code_lines:
+                max: 1965
+                reason: Turso keeps migrations, transactional commits, queues, conflicts, mappings, and backend operations colocated.
+            scc.complexity:
+                max: 67
+                reason: Transaction and storage-result handling adds bounded branching across the backend contract.
+    crates/bonhomme-engine/src/conflict.rs:
+        kind: architectural
+        reason: Conflict creation, projection, recovery, validation, and resolution currently share one cohesive workflow module.
         metrics:
             scc.code_lines:
-                max: 799
-                reason: Turso backend keeps schema, mappings, and backend operations colocated.
+                max: 587
+                reason: Splitting the conflict state machine should be handled as a focused architectural change.
+    crates/bonhomme-engine/src/lib.rs:
+        kind: architectural
+        reason: The engine facade keeps validated tenant-scoped orchestration and durable queue invariants at the shared backend boundary.
+        metrics:
+            scc.code_lines:
+                max: 564
+    crates/bonhomme-engine/src/storage_conformance_tests.rs:
+        kind: permanent
+        reason: One backend-neutral executable contract intentionally runs identical lifecycle and rollback scenarios against Turso and Postgres.
+        metrics:
+            filesystem.bytes:
+                max: 61801
+            scc.code_lines:
+                max: 1885
+    crates/bonhomme-engine/src/turso_tests.rs:
+        kind: permanent
+        reason: Embedded-backend regression coverage intentionally exercises storage behavior through a single test module.
+        metrics:
+            scc.code_lines:
+                max: 685
+                reason: Turso lifecycle, persistence, replay, and failure-path tests share setup and fixtures in this module.
     crates/bonhomme-fallback/src/toml.rs:
         kind: architectural
         reason: Fallback handler complexity is accepted pending a focused parser decomposition.
@@ -112,15 +151,48 @@ variances:
         reason: Go helper parser complexity is accepted pending focused parser decomposition.
         metrics:
             scc.complexity:
-                max: 56
+                max: 66
                 reason: Go AST/type lowering is centralized in the helper parser.
-    crates/bonhomme-go/src/tests.rs:
-        kind: permanent
-        reason: Language tests include long source fixtures that are accepted for readability.
+    crates/bonhomme-java/src/import.rs:
+        kind: architectural
+        reason: Java syntax lowering and operation construction are centralized in the initial language plugin.
         metrics:
-            filesystem.longest_line:
-                max: 152
-                reason: The long line is embedded source text used by Go import/render tests.
+            scc.code_lines:
+                max: 800
+                reason: Java import keeps declaration traversal and graph operation construction together.
+            scc.complexity:
+                max: 94
+                reason: Java lowering branches by declaration and member kind.
+    crates/bonhomme-kotlin/src/import.rs:
+        kind: architectural
+        reason: Kotlin syntax lowering and operation construction are centralized in the initial language plugin.
+        metrics:
+            scc.code_lines:
+                max: 781
+                reason: Kotlin import keeps declaration traversal and graph operation construction together.
+            scc.complexity:
+                max: 94
+                reason: Kotlin lowering branches by declaration and member kind.
+    crates/bonhomme-markdown/src/import.rs:
+        kind: architectural
+        reason: Markdown parsing, symbolization, and reference extraction remain centralized in the importer.
+        metrics:
+            scc.code_lines:
+                max: 743
+                reason: Markdown block and inline event handling are currently implemented as one import pipeline.
+            scc.complexity:
+                max: 98
+                reason: Markdown lowering branches over block structure, inline events, and link resolution.
+    crates/bonhomme-php/src/import.rs:
+        kind: architectural
+        reason: PHP syntax lowering and operation construction are centralized in the initial language plugin.
+        metrics:
+            scc.code_lines:
+                max: 862
+                reason: PHP import keeps declaration traversal and graph operation construction together.
+            scc.complexity:
+                max: 105
+                reason: PHP lowering branches by namespace, declaration, and member kind.
     crates/bonhomme-python/src/import.rs:
         kind: architectural
         reason: Existing language importer exceeds repository thresholds; decomposition should be handled as focused follow-up work.
@@ -131,6 +203,16 @@ variances:
             scc.complexity:
                 max: 61
                 reason: Python syntax lowering has branching by declaration kind.
+    crates/bonhomme-ruby/src/import.rs:
+        kind: architectural
+        reason: Ruby syntax lowering and operation construction are centralized in the initial language plugin.
+        metrics:
+            scc.code_lines:
+                max: 637
+                reason: Ruby import keeps declaration traversal and graph operation construction together.
+            scc.complexity:
+                max: 68
+                reason: Ruby lowering branches by module, class, and method form.
     crates/bonhomme-rust/src/import.rs:
         kind: architectural
         reason: Existing language importer exceeds repository thresholds; decomposition should be handled as focused follow-up work.
@@ -138,13 +220,44 @@ variances:
             scc.code_lines:
                 max: 689
                 reason: Rust import currently keeps parser lowering and operation construction in one module.
+    crates/bonhomme-swift/src/import.rs:
+        kind: architectural
+        reason: Swift syntax lowering and operation construction are centralized in the initial language plugin.
+        metrics:
+            scc.code_lines:
+                max: 725
+                reason: Swift import keeps declaration traversal and graph operation construction together.
+            scc.complexity:
+                max: 87
+                reason: Swift lowering branches by declaration and member kind.
+    crates/bonhomme-ts/src/recover/mod.rs:
+        kind: architectural
+        reason: TypeScript identity recovery is intentionally centralized while parser write paths converge.
+        metrics:
+            scc.complexity:
+                max: 75
+                reason: Recovery handles matched, added, deleted, renamed, and ambiguous semantic entities in one pipeline.
     crates/bonhomme-ts/src/tests.rs:
         kind: permanent
         reason: Large coverage-focused test module is accepted until test fixtures are reorganized.
         metrics:
             scc.code_lines:
-                max: 652
+                max: 685
                 reason: TypeScript import, render, and recovery regression coverage lives in one module.
+    crates/bonhomme/src/api.rs:
+        kind: architectural
+        reason: The HTTP trust boundary currently colocates routing, authenticated swarm launch, path confinement, private logging, resource policy, and redacted error handling.
+        metrics:
+            scc.code_lines:
+                max: 839
+            scc.complexity:
+                max: 77
+    crates/bonhomme/src/cli.rs:
+        kind: architectural
+        reason: CLI parsing and exhaustive mutation-audit classification remain colocated so every command leaf is compile-time visible to the audit gate.
+        metrics:
+            scc.code_lines:
+                max: 881
     crates/bonhomme/src/cli/commands.rs:
         kind: architectural
         reason: CLI command module complexity is accepted pending command handler decomposition.
@@ -153,34 +266,83 @@ variances:
                 max: 168
                 reason: The longest line is user-facing command/help text where wrapping is less readable.
             scc.code_lines:
-                max: 925
+                max: 1179
                 reason: Command dispatch and helper routines are currently colocated.
             scc.complexity:
-                max: 78
+                max: 104
                 reason: Command dispatch necessarily branches by subcommand in the current structure.
+    crates/bonhomme/src/cli/conflict_workspace.rs:
+        kind: architectural
+        reason: Conflict workspace creation, path confinement, symlink defense, manifest validation, and regression tests share one filesystem boundary.
+        metrics:
+            scc.code_lines:
+                max: 510
+    crates/bonhomme/src/cli/slice_workspace.rs:
+        kind: architectural
+        reason: Slice workspace creation, path confinement, symlink defense, manifest validation, and regression tests share one filesystem boundary.
+        metrics:
+            scc.code_lines:
+                max: 536
+            scc.complexity:
+                max: 53
+    crates/bonhomme/src/cli/git_bridge.rs:
+        kind: architectural
+        reason: Git object isolation, import/export, shadow evaluation, corpus execution, and their regression tests form one compatibility boundary.
+        metrics:
+            filesystem.bytes:
+                max: 53842
+                reason: The bridge includes deterministic reports, hostile-config isolation, fixture evaluation, and executable evidence together.
+            filesystem.longest_line:
+                max: 142
+                reason: One diagnostic/test expression slightly exceeds the line threshold and remains clearer as a single Git-boundary assertion.
+            scc.code_lines:
+                max: 1444
+                reason: Git plumbing and semantic shadow evaluation are intentionally colocated so byte-fidelity rules cannot diverge.
+            scc.complexity:
+                max: 124
+                reason: Explicit handling of Git object modes, merge outcomes, benchmark expectations, and degradation paths creates bounded branching.
     crates/bonhomme/src/cli/session.rs:
         kind: architectural
         reason: Session workflow complexity is accepted pending focused session decomposition.
         metrics:
             scc.code_lines:
-                max: 747
+                max: 768
                 reason: Session start, review, and land flows are currently colocated.
             scc.complexity:
-                max: 63
+                max: 65
                 reason: Session workflow branches by filesystem and operation-recovery state.
+    crates/bonhomme/src/demo/state.rs:
+        kind: performance
+        reason: Demo state derives branch summaries and presentation metrics in one read path.
+        metrics:
+            scc.complexity:
+                max: 54
+                reason: Branch status and cached base-graph selection add bounded branching to the demo projection.
     crates/bonhomme/src/explorer.rs:
         kind: architectural
         reason: Explorer module complexity is accepted pending focused UI/server decomposition.
         metrics:
-            filesystem.longest_line:
-                max: 159
-                reason: The longest line is embedded UI markup/CSS where wrapping would reduce template clarity.
             scc.code_lines:
-                max: 902
+                max: 1183
                 reason: Explorer server, snapshot construction, and HTML rendering are currently colocated.
             scc.complexity:
-                max: 76
+                max: 89
                 reason: Explorer rendering and query handling branch over graph state and request parameters.
+    crates/bonhomme/src/plugins.rs:
+        kind: architectural
+        reason: Language registration, toolchain resolution, and cross-language routing tests remain in the application composition root.
+        metrics:
+            scc.code_lines:
+                max: 533
+                reason: The complete plugin registry and its routing contract are kept together to make handler precedence auditable.
+    crates/bonhomme/src/security.rs:
+        kind: architectural
+        reason: Fail-closed authentication and cross-process audit recovery require bounded branching at the centralized security boundary.
+        metrics:
+            scc.code_lines:
+                max: 887
+            scc.complexity:
+                max: 79
     crates/bonhomme/src/simulation.rs:
         kind: architectural
         reason: Simulation module size is accepted pending focused simulation decomposition.
@@ -188,3 +350,34 @@ variances:
             scc.code_lines:
                 max: 616
                 reason: Simulation state, agent behavior, and tests are currently colocated.
+    demo/scripts/codex-swarm.mjs:
+        kind: architectural
+        reason: The demo runner keeps mission generation, worker orchestration, merge, and repair in one executable script.
+        metrics:
+            scc.code_lines:
+                max: 886
+                reason: Splitting the standalone runner should follow stabilization of the swarm protocol.
+            scc.complexity:
+                max: 93
+                reason: The runner branches across mission types, dry runs, retries, conflicts, and worker outcomes.
+    demo/src/App.css:
+        kind: architectural
+        reason: Workbench shell and component styling currently share one application stylesheet.
+        metrics:
+            scc.code_lines:
+                max: 605
+                reason: Component-level stylesheet extraction is deferred until the demo layout stabilizes.
+    demo/src/presentation/BonhommePresentation.css:
+        kind: permanent
+        reason: The self-contained presentation has a dedicated visual system in one stylesheet.
+        metrics:
+            scc.code_lines:
+                max: 792
+                reason: Presentation styles are intentionally kept with the standalone deck experience.
+    demo/src/presentation/BonhommePresentation.tsx:
+        kind: permanent
+        reason: The self-contained presentation keeps its walkthrough data and rendering in one lazy-loaded component.
+        metrics:
+            scc.code_lines:
+                max: 766
+                reason: The presentation is an independently loaded artifact rather than core application logic.

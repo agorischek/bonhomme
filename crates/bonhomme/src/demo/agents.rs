@@ -1,9 +1,10 @@
 use super::{
-    DEMO_REPOSITORY, DemoMethod, DemoState, SpawnAgentsRequest, demo_state, display_name_method_id,
-    ensure_demo, list_orders_method_id, order_service_class_id, stable_uuid,
+    AgentSliceRequest, AgentSliceResponse, ApplyAgentSliceRequest, DEMO_REPOSITORY, DemoMethod,
+    DemoState, SpawnAgentsRequest, demo_state, display_name_method_id, ensure_demo,
+    list_orders_method_id, order_service_class_id, stable_uuid,
 };
-use anyhow::Result;
-use bonhomme_core::{Operation, Repository};
+use anyhow::{Result, bail};
+use bonhomme_core::{MergeOutcome, Operation, Repository};
 use bonhomme_engine::Storage;
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -27,6 +28,131 @@ pub async fn spawn_agents(storage: &Storage, request: SpawnAgentsRequest) -> Res
     for number in start..start + request.count {
         spawn_one_agent(storage, &repository, number, request.include_conflicts).await?;
     }
+
+    demo_state(storage).await
+}
+
+pub async fn create_agent_slice(
+    storage: &Storage,
+    request: AgentSliceRequest,
+) -> Result<AgentSliceResponse> {
+    ensure_demo(storage).await?;
+    let repository = storage.repository_by_name(DEMO_REPOSITORY).await?;
+    if request.replace_branch.unwrap_or(false) {
+        if request.branch_name == "main" {
+            bail!("cannot replace the demo main branch");
+        }
+        storage
+            .delete_branch_by_name(repository.id, &request.branch_name)
+            .await?;
+    }
+    let branch = storage
+        .create_branch(repository.id, &request.branch_name, "main")
+        .await?;
+    let materialized = storage
+        .materialize_branch(DEMO_REPOSITORY, &request.branch_name)
+        .await?;
+    let root_symbols = if let Some(symbol) = request.symbol {
+        materialized
+            .graph
+            .find_symbol(&symbol)
+            .into_iter()
+            .map(|symbol| symbol.id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let base_position = materialized.operations.len() as i64;
+    let stored_slice = storage
+        .create_slice(repository.id, branch.id, base_position, &root_symbols)
+        .await?;
+    let mut slice = storage.plugin().render_slice(
+        &materialized.graph,
+        format!("{}@{}", branch.name, base_position),
+        root_symbols,
+    );
+    slice.id = stored_slice.id;
+    Ok(AgentSliceResponse { branch, slice })
+}
+
+pub async fn apply_agent_slice(
+    storage: &Storage,
+    request: ApplyAgentSliceRequest,
+) -> Result<DemoState> {
+    ensure_demo(storage).await?;
+    let repository = storage.repository_by_name(DEMO_REPOSITORY).await?;
+    let slice_id = request.slice.id;
+    let stored_slice = storage.slice_by_id(slice_id).await?;
+    if stored_slice.repository_id != repository.id {
+        bail!("slice {slice_id} does not belong to repository {DEMO_REPOSITORY}");
+    }
+
+    let branch = storage.branch_by_id(stored_slice.branch_id).await?;
+    let branch_position_at_apply = storage
+        .collect_branch_operations(branch.id, None)
+        .await?
+        .len() as i64;
+    let materialized = storage
+        .materialize_branch_at_position(branch.id, stored_slice.base_position)
+        .await?;
+    let operations = storage.plugin().recover_operations(
+        &materialized.graph,
+        &stored_slice.root_symbols,
+        &request.slice.files,
+    )?;
+    let operations = bonhomme_core::detect_moves(operations, &materialized.graph);
+    let analysis = storage
+        .analyze_operations_against_branch(branch.id, stored_slice.base_position, &operations)
+        .await?;
+    if analysis.outcome == MergeOutcome::Conflict {
+        storage
+            .create_slice_apply_conflict(
+                slice_id,
+                &branch,
+                bonhomme_engine::ConflictPositions::new(
+                    stored_slice.base_position,
+                    branch_position_at_apply,
+                ),
+                analysis.conflicts,
+                operations,
+                &request.agent,
+            )
+            .await?;
+        return demo_state(storage).await;
+    }
+
+    let task = storage.create_task(repository.id, &request.title).await?;
+    let changeset = storage
+        .create_changeset(
+            repository.id,
+            task.id,
+            branch.id,
+            &request.title,
+            &request.agent,
+        )
+        .await?;
+    let appended = storage
+        .append_operations(repository.id, branch.id, changeset.id, operations.clone())
+        .await?;
+    storage
+        .add_attachment(
+            repository.id,
+            "changeset",
+            changeset.id,
+            "SliceRecoveryAttachment",
+            json!({
+                "strategy": "demo-api-stored-slice-recovery",
+                "sliceId": slice_id,
+                "branch": branch.name,
+                "basePosition": stored_slice.base_position,
+                "branchPositionAtApply": branch_position_at_apply,
+                "stale": branch_position_at_apply != stored_slice.base_position,
+                "rootSymbols": stored_slice.root_symbols,
+                "operationCount": operations.len(),
+                "appendedOperationIds": appended.iter().map(|record| record.id).collect::<Vec<_>>(),
+            }),
+        )
+        .await?;
 
     demo_state(storage).await
 }
