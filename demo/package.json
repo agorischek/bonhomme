@@ -14,7 +14,7 @@
   "dependencies": {
     "@primer/octicons-react": "^19.28.1",
     "@primer/react": "^38.29.0",
-    "framer-motion": "^12.40.0",
+    "framer-motion": "^13.1.1",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.561.0",
     "react": "^19.2.6",
